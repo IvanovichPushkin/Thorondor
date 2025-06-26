@@ -1,7 +1,7 @@
 task: detect
 mode: train
-model: C:\Users\Administrator\Desktop\VSCode\Research Project\Thorondor\App\yolov8n.pt
-data: C:\Users\Administrator\Desktop\VSCode\Research Project\Thorondor\App\data.yaml
+model: /Users/tyrone-villena/Desktop/Thorondor-main/App/yolov10n.pt
+data: /Users/tyrone-villena/Desktop/Thorondor-main/App/data.yaml
 epochs: 30
 time: null
 patience: 100
@@ -10,10 +10,10 @@ imgsz: 640
 save: true
 save_period: -1
 cache: false
-device: null
+device: cpu
 workers: 8
-project: C:\Users\Administrator\Desktop\VSCode\Research Project\Thorondor\App\runs
-name: aidetection
+project: /Users/tyrone-villena/Desktop/Thorondor-main/App/runs
+name: aidetection5
 exist_ok: false
 pretrained: true
 optimizer: auto
@@ -95,10 +95,11 @@ fliplr: 0.5
 bgr: 0.0
 mosaic: 1.0
 mixup: 0.0
+cutmix: 0.0
 copy_paste: 0.0
 copy_paste_mode: flip
 auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: C:\Users\Administrator\Desktop\VSCode\Research Project\Thorondor\App\runs\aidetection
+save_dir: /Users/tyrone-villena/Desktop/Thorondor-main/App/runs/aidetection5

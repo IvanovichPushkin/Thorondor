@@ -2,7 +2,7 @@ train: ./data/images/train
 val: ./data/images/val
 
 # Number of classes
-nc: 3
+nc: 2
 
 # Class names (IDs will be assigned by order: 0, 1, 2)
-names: ["phone", "looking_away_for_more_than_5_seconds", "talking_to_classmate"]
+names: ["phone", "watch"]

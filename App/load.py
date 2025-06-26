@@ -6,7 +6,7 @@ import os
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Build full path to the YOLO model inside the App folder
-model_path = os.path.join(base_dir, 'yolov8n.pt')
+model_path = os.path.join(base_dir, 'yolov10n.pt')
 
 model = YOLO(model_path)
 
