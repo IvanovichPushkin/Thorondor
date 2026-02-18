@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Argus - Multi-Camera Detection</title>
+    <link rel="stylesheet" type="text/css" href="/static/styles/app.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="video">
+        <h2>
+          Live Multi-Camera
+          <span id="status">● REC</span>
+          <span id="webrtcStatus">⏳ connecting...</span>
+        </h2>
+        <div class="camera-buttons">
+          {% for cam in cams %}
+          <button onclick="switchCam('{{cam}}')">{{cam}}</button>
+          {% endfor %}
+        </div>
+        <div class="overlay">
+          <button
+            class="btn"
+            onclick="saveDir()"
+            style="background: #1877f2; color: white"
+          >
+            SET VIDEO DIR
+          </button>
+          <button
+            id="startB"
+            class="btn rec-btn"
+            onclick="doRec('start')"
+            disabled
+          >
+            RECORD VIDEO
+          </button>
+          <button id="stopB" class="btn stop-btn" onclick="doRec('stop')">
+            STOP VIDEO
+          </button>
+          <br style="width: 100%" />
+          <button
+            class="btn"
+            onclick="saveLogDir()"
+            style="background: #9c27b0; color: white"
+          >
+            SET LOG DIR
+          </button>
+          <button
+            id="startLogB"
+            class="btn log-rec-btn"
+            onclick="doLogRec('start')"
+            disabled
+          >
+            RECORD LOG
+          </button>
+          <button
+            id="stopLogB"
+            class="btn log-stop-btn"
+            onclick="doLogRec('stop')"
+          >
+            STOP LOG
+          </button>
+        </div>
+        <div id="progress"><div id="progressBar"></div></div>
+        <div id="progressText">0%</div>
+        <div id="saveWarning">⚠️ SAVING VIDEO - DO NOT CLOSE APP ⚠️</div>
+
+        <!-- WebRTC video element (primary) -->
+        <video id="videoStream" autoplay playsinline muted></video>
+        <!-- MJPEG fallback shown only if WebRTC fails -->
+        <img
+          id="fallbackStream"
+          class="fallback"
+          style="display: none"
+          src=""
+        />
+      </div>
+      <div class="log">
+        <h2>Live Detection Log</h2>
+        <div id="log"></div>
+      </div>
+    </div>
+  </body>
+  <script src="/static/scripts/app.js"></script>
+</html>

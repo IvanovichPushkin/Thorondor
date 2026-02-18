@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Argus Webcam</title>
+    <link rel="stylesheet" type="text/css" href="/static/styles/wcapp.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="video">
+        <h2>
+          Live Webcam
+          <span id="status">● REC</span>
+          <span
+            id="webrtcStatus"
+            style="font-size: 0.6em; color: #666; margin-left: 10px"
+            >⏳ connecting...</span
+          >
+        </h2>
+        <div class="overlay">
+          <button
+            class="btn"
+            onclick="saveDir()"
+            style="background: #1877f2; color: white"
+          >
+            SET VIDEO DIR
+          </button>
+          <button
+            id="startB"
+            class="btn rec-btn"
+            onclick="doRec('start')"
+            disabled
+          >
+            RECORD VIDEO
+          </button>
+          <button id="stopB" class="btn stop-btn" onclick="doRec('stop')">
+            STOP VIDEO
+          </button>
+          <br style="width: 100%" />
+          <button
+            class="btn"
+            onclick="saveLogDir()"
+            style="background: #9c27b0; color: white"
+          >
+            SET LOG DIR
+          </button>
+          <button
+            id="startLogB"
+            class="btn log-rec-btn"
+            onclick="doLogRec('start')"
+            disabled
+          >
+            RECORD LOG
+          </button>
+          <button
+            id="stopLogB"
+            class="btn log-stop-btn"
+            onclick="doLogRec('stop')"
+          >
+            STOP LOG
+          </button>
+        </div>
+
+        <div id="progress"><div id="progressBar"></div></div>
+        <div id="progressText">0%</div>
+        <div id="saveWarning">SAVING VIDEO - DO NOT CLOSE APP</div>
+
+        <video
+          id="videoStream"
+          autoplay
+          playsinline
+          muted
+          style="width: 100%; height: auto; display: none"
+        ></video>
+
+        <img id="fallbackStream" src="/video/cam1" />
+      </div>
+
+      <div class="log">
+        <h2>Live Detection Log</h2>
+        <div id="log"></div>
+      </div>
+    </div>
+    <script src="/static/scripts/wcapp.js"></script>
+  </body>
+</html>
