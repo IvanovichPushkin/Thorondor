@@ -8,7 +8,7 @@ To train the AI, go to "machine_learning" folder and to check the working app af
 simply go to "system" folder.
 
 
-__________________________Extract "ffmpeg.exe" from "ffmpeg.rar" in "system/bin/"__________________________
+__________________________Extract "ffmpeg.exe" from "ffmpeg.rar" in "system/bin/" to "system/bin/"__________________________
 
 
 
