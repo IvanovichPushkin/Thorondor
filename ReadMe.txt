@@ -60,7 +60,7 @@ flask --app app run --host 0.0.0.0 --port=5000
 __________________________When updating the project every time there is an update__________________________
 
 git fetch origin main
-git checkout .
+git checkout origin/main -- .
 
 
 ============= For individual folders like machine_learning/system =============

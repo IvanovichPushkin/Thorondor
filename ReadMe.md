@@ -33,7 +33,7 @@ flask --app wcapp run --host 0.0.0.0 --port=5000
 # When updating the project every time there is an update
 
 git fetch origin main<br>
-git checkout .
+git checkout origin/main -- .
 
 ### For individual folders like machine_learning/system
 
