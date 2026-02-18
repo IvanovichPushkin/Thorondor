@@ -1,0 +1,16 @@
+train: pose_data/train/images
+val: pose_data/valid/images
+test: pose_data/test/images
+
+kpt_shape: [17, 3]
+flip_idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+
+nc: 2
+names: ["cheating", "normal"]
+
+roboflow:
+  workspace: firas-tlili-twfri
+  project: classroom-cheating-detection-ekr9n
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/firas-tlili-twfri/classroom-cheating-detection-ekr9n/dataset/1
