@@ -30,6 +30,14 @@ flask --app wcapp.py run
 
 flask --app wcapp run --host 0.0.0.0 --port=5000
 
+## For an actual camera device =============
+
+flask --app app.py run
+
+### or
+
+flask --app app run --host 0.0.0.0 --port=5000
+
 # When updating the project every time there is an update
 
 git fetch origin main<br>
