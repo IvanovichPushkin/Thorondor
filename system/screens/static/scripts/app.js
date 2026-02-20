@@ -81,6 +81,12 @@ function switchCam(camName) {
   document.getElementById("videoStream").style.display = "none";
   document.getElementById("fallbackStream").style.display = "block";
   startWebRTC(camName);
+
+  // Highlight active camera
+  document.querySelectorAll(".cam-btn").forEach((btn) => {
+    if (btn.textContent.trim() === camName) btn.classList.add("active");
+    else btn.classList.remove("active");
+  });
 }
 
 // Start initial camera

@@ -72,29 +72,27 @@ video {
 }
 
 /* ---------------- CAMERA BUTTONS ---------------- */
-.camera-buttons {
-  margin-bottom: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.camera-buttons button {
-  padding: 8px 14px;
-  font-weight: 600;
-  font-size: 13px;
-  cursor: pointer;
-  border-radius: 8px;
-  border: 1px solid #d1d5db;
-  background: #1877f2;
+.cam-btn {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
   color: white;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
   transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
-.camera-buttons button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+.cam-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.18);
+}
+
+/* Active camera */
+.cam-btn.active {
+  background: linear-gradient(135deg, #10b981, #059669);
 }
 
 /* ---------------- OVERLAY CONTROLS ---------------- */

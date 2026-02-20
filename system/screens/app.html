@@ -21,7 +21,9 @@
         <!-- Keep multi-camera buttons for logic -->
         <div class="camera-buttons">
           {% for cam in cams %}
-          <button onclick="switchCam('{{cam}}')">{{cam}}</button>
+          <button class="btn cam-btn" onclick="switchCam('{{cam}}')">
+            {{cam}}
+          </button>
           {% endfor %}
         </div>
 
