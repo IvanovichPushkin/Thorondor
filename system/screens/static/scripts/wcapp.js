@@ -24,13 +24,13 @@ async function startWebRTC() {
       videoEl.srcObject = evt.streams[0];
       videoEl.style.display = "block";
       fallbackEl.style.display = "none";
-      statusEl.textContent = "🟢 WebRTC Active";
+      statusEl.textContent = "WebRTC Active";
     }
   };
 
   pc.oniceconnectionstatechange = () => {
     if (pc.iceConnectionState === "failed") {
-      statusEl.textContent = "🔴 WebRTC Failed - Using MJPEG";
+      statusEl.textContent = "WebRTC Failed - Using MJPEG";
       videoEl.style.display = "none";
       fallbackEl.style.display = "block";
     }
@@ -54,7 +54,7 @@ async function startWebRTC() {
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
   } catch (e) {
     console.error("WebRTC Error:", e);
-    statusEl.textContent = "🔴 WebRTC Error";
+    statusEl.textContent = "WebRTC Error";
   }
 }
 
@@ -86,7 +86,7 @@ function doRec(action) {
   fetch("/" + action + "_record")
     .then((response) => {
       if (!response.ok) {
-        alert("⚠️ Please click SET VIDEO DIR first!");
+        alert("Please click SET VIDEO DIR first!");
         return;
       }
       return response.json();
@@ -167,8 +167,28 @@ function doLogRec(action) {
 function initLogStream() {
   const logDiv = document.getElementById("log");
   const evtSource = new EventSource("/log_stream");
+
   evtSource.onmessage = function (e) {
-    logDiv.innerHTML += e.data + "<br>";
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Create a new log line element
+    const line = document.createElement("div");
+    line.textContent = e.data;
+
+    // Optional: color coding
+    if (e.data.includes("Cheating")) {
+      line.style.color = "#dc2626"; // red
+      line.style.fontWeight = "600";
+    } else if (e.data.includes("Normal")) {
+      line.style.color = "#16a34a"; // green
+    } else if (e.data.includes("Object")) {
+      line.style.color = "#2563eb"; // blue
+    }
+
+    logDiv.appendChild(line);
+
+    // Auto-scroll to bottom smoothly
+    logDiv.scrollTo({
+      top: logDiv.scrollHeight,
+      behavior: "smooth",
+    });
   };
 }

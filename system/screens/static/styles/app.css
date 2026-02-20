@@ -1,138 +1,234 @@
+/* ---------------- GLOBAL ---------------- */
 body {
-  font-family: monospace;
+  font-family:
+    "Segoe UI",
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
   margin: 0;
   padding: 0;
+  background: linear-gradient(135deg, #f4f6f9, #e9edf3);
+  color: #1f2937;
 }
+
 .container {
   display: flex;
   height: 100vh;
 }
+
+/* ---------------- VIDEO PANEL ---------------- */
 .video {
   flex: 2;
-  padding: 10px;
+  padding: 20px;
   position: relative;
+  background: #ffffff;
+  box-shadow: inset -1px 0 0 #e5e7eb;
 }
-.log {
-  flex: 1;
-  padding: 10px;
-  background-color: #f0f0f0;
-  overflow-y: scroll;
-  border-left: 2px solid #ccc;
+
+.video h2 {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  margin-bottom: 15px;
 }
-video,
-img.fallback {
+
+/* Stream */
+img,
+video {
   width: 100%;
   height: auto;
-  border: 1px solid #333;
-  background: #000;
+  border-radius: 12px;
+  border: 1px solid #d1d5db;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  display: block;
 }
+
+/* ---------------- LOG PANEL ---------------- */
+.log {
+  flex: 1;
+  padding: 20px;
+  background: #f9fafb;
+  border-left: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+.log h2 {
+  margin: 0 0 10px 0;
+  flex-shrink: 0;
+}
+
+#log {
+  flex: 1;
+  overflow-y: auto;
+  background: white;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------------- CAMERA BUTTONS ---------------- */
 .camera-buttons {
   margin-bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
 }
+
 .camera-buttons button {
-  margin-right: 10px;
-  padding: 8px 16px;
+  padding: 8px 14px;
+  font-weight: 600;
+  font-size: 13px;
   cursor: pointer;
-  border: 1px solid #000;
-  font-weight: bold;
-  background: #2196f3;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  background: #1877f2;
   color: white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transition: all 0.2s ease;
 }
+
+.camera-buttons button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+}
+
+/* ---------------- OVERLAY CONTROLS ---------------- */
 .overlay {
   position: absolute;
-  top: 20px;
-  right: 20px;
-  background: rgba(255, 255, 255, 0.9);
-  padding: 10px;
-  border: 1px solid #000;
+  top: 25px;
+  right: 25px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  padding: 15px;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
   display: flex;
-  gap: 5px;
+  gap: 8px;
   align-items: center;
   flex-wrap: wrap;
   z-index: 10;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
+
+/* ---------------- BUTTONS ---------------- */
 .btn {
   cursor: pointer;
-  border: 1px solid #000;
-  padding: 5px 10px;
-  font-weight: bold;
+  border: none;
+  padding: 8px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
+
+.btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+}
+
+/* Record Buttons */
 .rec-btn {
-  background: red;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
   color: white;
   display: block;
 }
+
 .rec-btn:disabled {
-  background: #ccc;
-  color: #666;
+  background: #d1d5db;
+  color: #6b7280;
   cursor: not-allowed;
+  box-shadow: none;
 }
+
 .stop-btn {
-  background: white;
-  color: black;
+  background: #111827;
+  color: white;
   display: none;
 }
+
 .log-rec-btn {
-  background: #4caf50;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
   color: white;
   display: block;
 }
+
 .log-rec-btn:disabled {
-  background: #ccc;
-  color: #666;
+  background: #d1d5db;
+  color: #6b7280;
   cursor: not-allowed;
+  box-shadow: none;
 }
+
 .log-stop-btn {
-  background: white;
-  color: black;
+  background: #111827;
+  color: white;
   display: none;
 }
+
+/* ---------------- STATUS INDICATORS ---------------- */
 #status {
-  color: red;
+  color: #ef4444;
   font-weight: bold;
   display: none;
   margin-right: 10px;
   animation: blinker 1s linear infinite;
 }
+
+#webrtcStatus {
+  font-size: 0.75em;
+  font-weight: 500;
+  color: #6b7280;
+}
+
 @keyframes blinker {
   50% {
     opacity: 0;
   }
 }
+
+/* ---------------- PROGRESS BAR ---------------- */
 #progress {
   width: 100%;
-  background: #ccc;
-  height: 10px;
+  background: #e5e7eb;
+  height: 12px;
   display: none;
-  margin-top: 5px;
-  position: relative;
+  margin-top: 10px;
+  border-radius: 20px;
+  overflow: hidden;
 }
+
 #progressBar {
   width: 0%;
   height: 100%;
-  background: green;
+  background: linear-gradient(90deg, #3b82f6, #2563eb);
+  transition: width 0.3s ease;
 }
+
 #progressText {
   position: absolute;
-  top: 15px;
+  top: 18px;
   left: 50%;
   transform: translateX(-50%);
-  font-weight: bold;
-  color: #000;
+  font-weight: 600;
+  color: #111827;
   display: none;
 }
+
+/* ---------------- SAVE WARNING ---------------- */
 #saveWarning {
-  background: #ff9800;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
   color: white;
-  padding: 10px;
-  font-weight: bold;
+  padding: 12px;
+  font-weight: 600;
   text-align: center;
   display: none;
-  margin-top: 10px;
-  border: 2px solid #f57c00;
-}
-#webrtcStatus {
-  font-size: 0.75em;
-  color: #888;
-  margin-left: 8px;
+  margin-top: 15px;
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
 }

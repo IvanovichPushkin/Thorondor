@@ -1,8 +1,9 @@
 let currentCam = "{{default_cam}}";
 let pc = null;
+let progressInterval = null;
 
 // -----------------------------------------------
-// WebRTC
+// WebRTC (matches webcam.js style)
 // -----------------------------------------------
 async function startWebRTC(camName) {
   // Close any existing connection
@@ -11,31 +12,40 @@ async function startWebRTC(camName) {
     pc = null;
   }
 
-  document.getElementById("webrtcStatus").textContent = "⏳ connecting...";
+  const statusEl = document.getElementById("webrtcStatus");
+  const videoEl = document.getElementById("videoStream");
+  const fallbackEl = document.getElementById("fallbackStream");
+
+  // Initial UI state
+  videoEl.style.display = "none";
+  fallbackEl.src = "/video/" + camName;
+  fallbackEl.style.display = "block";
+  statusEl.style.fontSize = "0.6em";
+  statusEl.style.color = "#666";
+  statusEl.style.marginLeft = "10px";
+  statusEl.textContent = "connecting...";
 
   pc = new RTCPeerConnection({
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   });
 
-  // Add a transceiver so the server knows we want video
   pc.addTransceiver("video", { direction: "recvonly" });
 
   pc.ontrack = function (evt) {
-    const videoEl = document.getElementById("videoStream");
     if (evt.streams && evt.streams[0]) {
       videoEl.srcObject = evt.streams[0];
+      videoEl.style.display = "block";
+      fallbackEl.style.display = "none";
+      statusEl.textContent = "WebRTC Active";
     }
   };
 
   pc.oniceconnectionstatechange = function () {
     const state = pc.iceConnectionState;
-    const el = document.getElementById("webrtcStatus");
-    if (state === "connected" || state === "completed") {
-      el.textContent = "🟢 WebRTC";
-      document.getElementById("fallbackStream").style.display = "none";
-    } else if (state === "failed" || state === "disconnected") {
-      el.textContent = "🔴 WebRTC failed – using MJPEG";
-      useFallback(camName);
+    if (state === "failed" || state === "disconnected") {
+      statusEl.textContent = "WebRTC Failed - Using MJPEG";
+      videoEl.style.display = "none";
+      fallbackEl.style.display = "block";
     }
   };
 
@@ -58,33 +68,26 @@ async function startWebRTC(camName) {
     const answer = await resp.json();
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
   } catch (err) {
-    console.warn("WebRTC setup failed:", err);
-    document.getElementById("webrtcStatus").textContent =
-      "🔴 WebRTC unavailable – MJPEG";
-    useFallback(camName);
+    console.error("WebRTC Error:", err);
+    statusEl.textContent = "WebRTC Error";
+    videoEl.style.display = "none";
+    fallbackEl.style.display = "block";
   }
 }
 
-function useFallback(camName) {
-  document.getElementById("videoStream").style.display = "none";
-  const fb = document.getElementById("fallbackStream");
-  fb.src = "/video/" + camName;
-  fb.style.display = "block";
-}
-
+// Switch camera (multi-camera support)
 function switchCam(camName) {
   currentCam = camName;
-  // Reset fallback
-  document.getElementById("videoStream").style.display = "block";
-  document.getElementById("fallbackStream").style.display = "none";
+  document.getElementById("videoStream").style.display = "none";
+  document.getElementById("fallbackStream").style.display = "block";
   startWebRTC(camName);
 }
 
-// Start on load
+// Start initial camera
 window.addEventListener("load", () => startWebRTC(currentCam));
 
 // -----------------------------------------------
-// Recording / Log controls (unchanged from before)
+// Recording / Log controls (same as webcam.js)
 // -----------------------------------------------
 function saveDir() {
   fetch("/set_dir", { method: "POST" })
@@ -108,20 +111,19 @@ function saveLogDir() {
     });
 }
 
-let progressInterval = null;
-
 function doRec(action) {
   let isStart = action === "start";
   fetch("/" + action + "_record")
     .then((response) => {
       if (!response.ok) {
-        alert("⚠️ Please click SET VIDEO DIR first!");
+        alert("Please click SET VIDEO DIR first!");
         return;
       }
       return response.json();
     })
     .then((data) => {
       if (!data) return;
+
       document.getElementById("startB").style.display = isStart
         ? "none"
         : "block";
@@ -132,40 +134,45 @@ function doRec(action) {
         ? "inline"
         : "none";
 
-      if (!isStart) {
-        document.getElementById("startB").disabled = true;
-        let bar = document.getElementById("progress");
-        let inner = document.getElementById("progressBar");
-        let text = document.getElementById("progressText");
-        let warning = document.getElementById("saveWarning");
-        bar.style.display = "block";
-        text.style.display = "block";
-        warning.style.display = "block";
-        inner.style.width = "0%";
-        text.textContent = "0%";
-        progressInterval = setInterval(() => {
-          fetch("/record_progress")
-            .then((r) => r.json())
-            .then((p) => {
-              inner.style.width = p.percent + "%";
-              text.textContent = p.percent + "%";
-              if (p.done) {
-                clearInterval(progressInterval);
-                bar.style.display = "none";
-                text.style.display = "none";
-                warning.style.display = "none";
-                document.getElementById("startB").disabled = false;
-                alert("Video Saved ✅");
-              }
-            });
-        }, 500);
-      } else if (progressInterval) {
+      if (!isStart) handleProgress();
+      else if (progressInterval) {
         clearInterval(progressInterval);
-        document.getElementById("progress").style.display = "none";
-        document.getElementById("progressText").style.display = "none";
-        document.getElementById("saveWarning").style.display = "none";
+        toggleProgressUI(false);
       }
     });
+}
+
+function handleProgress() {
+  const inner = document.getElementById("progressBar");
+  const text = document.getElementById("progressText");
+
+  document.getElementById("startB").disabled = true;
+  toggleProgressUI(true);
+
+  inner.style.width = "0%";
+  text.textContent = "0%";
+
+  progressInterval = setInterval(() => {
+    fetch("/record_progress")
+      .then((r) => r.json())
+      .then((p) => {
+        inner.style.width = p.percent + "%";
+        text.textContent = p.percent + "%";
+        if (p.done) {
+          clearInterval(progressInterval);
+          toggleProgressUI(false);
+          document.getElementById("startB").disabled = false;
+          alert("Video Saved");
+        }
+      });
+  }, 500);
+}
+
+function toggleProgressUI(show) {
+  const display = show ? "block" : "none";
+  document.getElementById("progress").style.display = display;
+  document.getElementById("progressText").style.display = display;
+  document.getElementById("saveWarning").style.display = display;
 }
 
 function doLogRec(action) {
@@ -173,7 +180,7 @@ function doLogRec(action) {
   fetch("/" + action + "_log_record")
     .then((response) => {
       if (!response.ok) {
-        alert("⚠️ Please click SET LOG DIR first!");
+        alert("Please click SET LOG DIR first!");
         return;
       }
       return response.json();
@@ -186,13 +193,33 @@ function doLogRec(action) {
       document.getElementById("stopLogB").style.display = isStart
         ? "block"
         : "none";
-      alert(isStart ? "Log recording started! 📝" : "Log saved! ✅");
+      alert(isStart ? "Log recording started!" : "Log saved!");
     });
 }
 
-var evtSource = new EventSource("/log_stream");
-var logDiv = document.getElementById("log");
-evtSource.onmessage = function (e) {
-  logDiv.innerHTML += e.data + "<br>";
-  logDiv.scrollTop = logDiv.scrollHeight;
-};
+// -----------------------------------------------
+// Live Log Stream (like webcam.js)
+// -----------------------------------------------
+function initLogStream() {
+  const logDiv = document.getElementById("log");
+  const evtSource = new EventSource("/log_stream");
+
+  evtSource.onmessage = function (e) {
+    const line = document.createElement("div");
+    line.textContent = e.data;
+
+    if (e.data.includes("Cheating")) {
+      line.style.color = "#dc2626";
+      line.style.fontWeight = "600";
+    } else if (e.data.includes("Normal")) {
+      line.style.color = "#16a34a";
+    } else if (e.data.includes("Object")) {
+      line.style.color = "#2563eb";
+    }
+
+    logDiv.appendChild(line);
+    logDiv.scrollTo({ top: logDiv.scrollHeight, behavior: "smooth" });
+  };
+}
+
+document.addEventListener("DOMContentLoaded", initLogStream);
