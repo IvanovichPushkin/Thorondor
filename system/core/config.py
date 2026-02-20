@@ -6,9 +6,9 @@ CSV_FILE  = "detections.csv"
 CAMERA_SOURCES = {
     # Format: "rtsp://username:password@ip:554/stream1" (stream1=HD, stream2=low)
     # All cameras must be on the same 2.4 GHz network
-    "cam1": "rtsp://camera1:camera1234@192.168.254.111:554/stream2",
-    "cam2": "rtsp://camera1:camera1234@192.168.254.112:554/stream2",
-    "cam3": "rtsp://camera1:camera1234@192.168.254.113:554/stream2",
+    "Camera 1": "rtsp://FINALBOSS:FINALBOSS@192.168.1.9:554/stream2",
+    "Camera 2": "rtsp://FINALBOSS:FINALBOSS@192.168.1.9:554/stream2",
+    "Camera 3": "rtsp://FINALBOSS:FINALBOSS@192.168.1.9:554/stream2",
 }
 
 # === RESOLUTION ===
