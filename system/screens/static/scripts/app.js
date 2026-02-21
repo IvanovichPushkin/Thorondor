@@ -1,12 +1,9 @@
-let currentCam = "{{default_cam}}";
+let currentCam = document.body.dataset.defaultCam || "cam1";
 let pc = null;
 let progressInterval = null;
 
-// -----------------------------------------------
-// WebRTC (matches webcam.js style)
-// -----------------------------------------------
+// --- WebRTC ---
 async function startWebRTC(camName) {
-  // Close any existing connection
   if (pc) {
     pc.close();
     pc = null;
@@ -14,12 +11,7 @@ async function startWebRTC(camName) {
 
   const statusEl = document.getElementById("webrtcStatus");
   const videoEl = document.getElementById("videoStream");
-  const fallbackEl = document.getElementById("fallbackStream");
 
-  // Initial UI state
-  videoEl.style.display = "none";
-  fallbackEl.src = "/video/" + camName;
-  fallbackEl.style.display = "block";
   statusEl.style.fontSize = "0.6em";
   statusEl.style.color = "#666";
   statusEl.style.marginLeft = "10px";
@@ -34,8 +26,6 @@ async function startWebRTC(camName) {
   pc.ontrack = function (evt) {
     if (evt.streams && evt.streams[0]) {
       videoEl.srcObject = evt.streams[0];
-      videoEl.style.display = "block";
-      fallbackEl.style.display = "none";
       statusEl.textContent = "WebRTC Active";
     }
   };
@@ -43,9 +33,8 @@ async function startWebRTC(camName) {
   pc.oniceconnectionstatechange = function () {
     const state = pc.iceConnectionState;
     if (state === "failed" || state === "disconnected") {
-      statusEl.textContent = "WebRTC Failed - Using MJPEG";
-      videoEl.style.display = "none";
-      fallbackEl.style.display = "block";
+      statusEl.textContent = "WebRTC Failed — retrying...";
+      setTimeout(() => startWebRTC(camName), 3000);
     }
   };
 
@@ -69,32 +58,23 @@ async function startWebRTC(camName) {
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
   } catch (err) {
     console.error("WebRTC Error:", err);
-    statusEl.textContent = "WebRTC Error";
-    videoEl.style.display = "none";
-    fallbackEl.style.display = "block";
+    statusEl.textContent = "WebRTC Error — retrying...";
+    setTimeout(() => startWebRTC(camName), 3000);
   }
 }
 
-// Switch camera (multi-camera support)
 function switchCam(camName) {
   currentCam = camName;
-  document.getElementById("videoStream").style.display = "none";
-  document.getElementById("fallbackStream").style.display = "block";
   startWebRTC(camName);
 
-  // Highlight active camera
   document.querySelectorAll(".cam-btn").forEach((btn) => {
-    if (btn.textContent.trim() === camName) btn.classList.add("active");
-    else btn.classList.remove("active");
+    btn.classList.toggle("active", btn.textContent.trim() === camName);
   });
 }
 
-// Start initial camera
 window.addEventListener("load", () => startWebRTC(currentCam));
 
-// -----------------------------------------------
-// Recording / Log controls (same as webcam.js)
-// -----------------------------------------------
+// --- Recording ---
 function saveDir() {
   fetch("/set_dir", { method: "POST" })
     .then((r) => r.json())
@@ -129,7 +109,6 @@ function doRec(action) {
     })
     .then((data) => {
       if (!data) return;
-
       document.getElementById("startB").style.display = isStart
         ? "none"
         : "block";
@@ -154,7 +133,6 @@ function handleProgress() {
 
   document.getElementById("startB").disabled = true;
   toggleProgressUI(true);
-
   inner.style.width = "0%";
   text.textContent = "0%";
 
@@ -203,9 +181,7 @@ function doLogRec(action) {
     });
 }
 
-// -----------------------------------------------
-// Live Log Stream (like webcam.js)
-// -----------------------------------------------
+// --- Live Log Stream ---
 function initLogStream() {
   const logDiv = document.getElementById("log");
   const evtSource = new EventSource("/log_stream");

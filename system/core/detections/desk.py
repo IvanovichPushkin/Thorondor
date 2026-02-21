@@ -2,6 +2,7 @@ import cv2
 import csv
 from datetime import datetime
 
+
 from core.yolo_desk_models import yolo_desk
 from core.config import (
     YOLO_DESK_CONF_THRESHOLD,
@@ -18,7 +19,7 @@ DESK_COLOR = (0, 128, 255)
 _SNAP_GRID = 10
 IOU_THRESHOLD = 0.3
 
-_last_desk_state: dict[str, dict] = {}  # cam_name -> { instance_id -> box_tuple }
+_last_desk_state: dict[str, dict] = {}
 _next_instance_id = 0
 
 
@@ -54,23 +55,11 @@ def _iou(boxA, boxB):
 
 
 def _snap_box(box):
-    """Snap all four coords to grid to absorb jitter before IoU matching."""
     x1, y1, x2, y2 = box
     return (_snap(x1), _snap(y1), _snap(x2), _snap(y2))
 
 
 def _match_desks(prev_instances, current_boxes):
-    """
-    Match current desk boxes to previous instances via IoU.
-
-    prev_instances: dict { instance_id -> box_tuple }
-    current_boxes:  list of box_tuples
-
-    Returns:
-        matched:      dict { instance_id -> box_tuple }  (surviving instances)
-        new_boxes:    list of box_tuples                 (no match, newly appeared)
-        lost_ids:     list of instance_ids that disappeared
-    """
     used_prev = set()
     matched = {}
     new_boxes = []
@@ -134,7 +123,6 @@ def process(frame, cam_name, person_boxes=None):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, DESK_COLOR, 2
             )
 
-            # Snap before storing to absorb jitter in IoU comparisons
             current_boxes.append(_snap_box((x1, y1, x2, y2)))
 
     prev_instances = _last_desk_state.get(cam_name, {})

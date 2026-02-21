@@ -5,22 +5,20 @@ from collections import deque
 from core.config import CAMERA_SOURCES, FRAME_WIDTH, FRAME_HEIGHT
 
 # === Shared frame storage for low latency ===
-# We use deque maxlen=1 to drop old RTSP packets automatically.
-# This is the "secret" to turning RTSP into real-time WebRTC.
+# deque maxlen=1 drops old RTSP packets automatically — always fresh frame.
 frames = {name: deque(maxlen=1) for name in CAMERA_SOURCES.keys()}
 
 def capture_frames(cam_name, src):
     """
     Background thread to capture and flush RTSP/USB camera buffers.
     """
-    # For RTSP (Tapo), OpenCV works best with ffmpeg or no specific backend defined
+    # For RTSP (Tapo), OpenCV works best with ffmpeg backend (default)
     cap = cv2.VideoCapture(src)
-    
-    # Set resolution based on your config
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-    
-    # Critical for RTSP: minimize internal buffering
+
+    # Critical for RTSP: minimize internal OpenCV buffering
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     if not cap.isOpened():
@@ -29,22 +27,32 @@ def capture_frames(cam_name, src):
 
     print(f"[INFO] Started capture thread for: {cam_name}")
 
+    consecutive_failures = 0
+
     while True:
-        # 1. FLUSH: Grab frames without decoding them to reach the latest one.
-        # This prevents the Tapo cam from "bursting" or playing in fast-forward.
-        cap.grab()
-        
-        # 2. RETRIEVE: Decode only the absolute freshest frame
+        # FLUSH: Grab multiple frames without decoding to drain the RTSP buffer.
+        # Tapo cams buffer several frames server-side — 1 grab isn't enough.
+        # 4 grabs ensures we decode the absolute latest frame, not a stale one.
+        for _ in range(4):
+            cap.grab()
+
+        # RETRIEVE: Decode only the freshest frame
         ret, frame = cap.retrieve()
-        
+
         if not ret:
-            print(f"[WARN] Connection lost for {cam_name}. Reconnecting...")
-            cap.release()
-            time.sleep(2)
-            cap = cv2.VideoCapture(src)
+            consecutive_failures += 1
+            if consecutive_failures > 20:
+                print(f"[WARN] Connection lost for {cam_name}. Reconnecting...")
+                cap.release()
+                time.sleep(2)
+                cap = cv2.VideoCapture(src)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                consecutive_failures = 0
+            time.sleep(0.01)
             continue
 
-        # 3. THREAD SAFETY: Use .copy() so WebRTC doesn't grab a half-written frame
+        consecutive_failures = 0
+        # .copy() prevents thread-tearing when WebRTC reads simultaneously
         frames[cam_name].append(frame.copy())
 
 # === Background camera capture threads ===

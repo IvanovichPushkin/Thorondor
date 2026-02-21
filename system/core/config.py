@@ -12,7 +12,7 @@ CAMERA_SOURCES = {
 }
 
 # === RESOLUTION ===
-FRAME_WIDTH  = 1280   # fixed: width > height
+FRAME_WIDTH  = 1280
 FRAME_HEIGHT = 720
 
 # === MODEL PATHS ===
@@ -21,14 +21,12 @@ YOLO_DESK_MODEL_PATH = "../machine_learning/runs/argus_desk_detection/weights/be
 POSE_MODEL_PATH      = "../machine_learning/runs/pose/argus_pose_estimation/weights/best.pt"
 
 # === DETECTION THRESHOLDS ===
-YOLO_CONF_THRESHOLD      = 0.75   # object detection  (phone, calculator, smartwatch, watch)
-YOLO_DESK_CONF_THRESHOLD = 0.45   # desk detection
-POSE_CONF_THRESHOLD      = 0.15   # pose / cheating detection
+YOLO_CONF_THRESHOLD      = 0.75
+YOLO_DESK_CONF_THRESHOLD = 0.45
+POSE_CONF_THRESHOLD      = 0.15
 
-# === GSM / ALERTS ===
-PHONE_NUMBERS    = ["+639XXXXXXXXX", "+639YYYYYYYYY"]  # add your numbers here
-ALERT_COOLDOWN   = 10  # seconds between repeat SMS for same object
+# # === GSM / ALERTS ===
+# PHONE_NUMBERS    = ["+639XXXXXXXXX", "+639YYYYYYYYY"]
+# ALERT_COOLDOWN   = 10
 
-# Labels that trigger SMS alert — matches OBJECT_LABELS in obj_detection.py
-# Pose now outputs "cheating" directly — add it here to get SMS on cheating
-SUSPICIOUS_LABELS = ["phone", "smartwatch", "watch", "calculator", "cheating"]
+# SUSPICIOUS_LABELS = ["phone", "smartwatch", "watch", "calculator", "cheating"]

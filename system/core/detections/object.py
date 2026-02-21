@@ -6,13 +6,9 @@ from datetime import datetime
 from core.yolo_models import yolo
 from core.config import (
     YOLO_CONF_THRESHOLD,
-    SUSPICIOUS_LABELS,
-    ALERT_COOLDOWN,
-    PHONE_NUMBERS,
     LOG_FILE,
     CSV_FILE,
 )
-from core.gsm import gsm
 
 OBJECT_LABELS = {
     0: "Phone",
@@ -35,42 +31,28 @@ def _get_color(cls):
     return OBJECT_COLORS.get(cls, (0, 225, 255))
 
 
-_last_object_state = {}  # cam_name -> dict of { instance_key -> label }
-_last_alert_time   = {}
+_last_object_state = {}
+_next_instance_id  = 0
 
-IOU_THRESHOLD = 0.3  # Minimum IoU to consider two boxes the same object
+IOU_THRESHOLD = 0.3
 
 
 def _iou(boxA, boxB):
-    """Compute Intersection over Union between two (x1,y1,x2,y2) boxes."""
     xA = max(boxA[0], boxB[0])
     yA = max(boxA[1], boxB[1])
     xB = min(boxA[2], boxB[2])
     yB = min(boxA[3], boxB[3])
-
     interW = max(0, xB - xA)
     interH = max(0, yB - yA)
     interArea = interW * interH
     if interArea == 0:
         return 0.0
-
     areaA = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
     areaB = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
     return interArea / float(areaA + areaB - interArea)
 
 
 def _match_instances(prev_instances, current_detections):
-    """
-    Match current detections to previous instances using IoU.
-
-    prev_instances: dict { instance_id -> (label, box) }
-    current_detections: list of (label, box, conf)
-
-    Returns:
-        matched_instances: dict { instance_id -> (label, box) }  (carried-over IDs)
-        new_detections:    list of (label, box, conf)             (no match found)
-        lost_ids:          list of instance_ids that disappeared
-    """
     used_prev = set()
     matched_instances = {}
     unmatched_current = []
@@ -97,8 +79,6 @@ def _match_instances(prev_instances, current_detections):
     return matched_instances, unmatched_current, lost_ids
 
 
-_next_instance_id = 0
-
 def _new_id():
     global _next_instance_id
     _next_instance_id += 1
@@ -107,7 +87,7 @@ def _new_id():
 
 def process(frame, cam_name):
     results = yolo.predict(frame, imgsz=640, conf=YOLO_CONF_THRESHOLD, verbose=False)
-    current_detections = []  # list of (label, box_tuple, conf)
+    current_detections = []
 
     for r in results:
         for box in r.boxes:
@@ -126,7 +106,6 @@ def process(frame, cam_name):
     prev_instances = _last_object_state.get(cam_name, {})
     matched, new_detections, lost_ids = _match_instances(prev_instances, current_detections)
 
-    # Assign new IDs to unmatched detections (newly appeared objects)
     for label, box, conf in new_detections:
         inst_id = _new_id()
         matched[inst_id] = (label, box)
@@ -137,15 +116,6 @@ def process(frame, cam_name):
         with open(CSV_FILE, "a", newline="") as f:
             csv.writer(f).writerow([timestamp, cam_name, "Object Detected", label, inst_id])
 
-        if label.lower() in SUSPICIOUS_LABELS:
-            alert_key = f"{cam_name}_{label}"
-            now = time.time()
-            if alert_key not in _last_alert_time or now - _last_alert_time[alert_key] > ALERT_COOLDOWN:
-                for number in PHONE_NUMBERS:
-                    gsm.send_sms(number, f"ALERT: {label} detected on {cam_name}")
-                _last_alert_time[alert_key] = now
-
-    # Log objects that have left the frame
     for inst_id in lost_ids:
         label, _ = prev_instances[inst_id]
         timestamp = datetime.now()

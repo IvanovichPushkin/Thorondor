@@ -9,11 +9,7 @@ from core.config import (
     POSE_CONF_THRESHOLD,
     LOG_FILE,
     CSV_FILE,
-    ALERT_COOLDOWN,
-    PHONE_NUMBERS,
-    SUSPICIOUS_LABELS,
 )
-from core.gsm import gsm
 
 POSE_LABELS = {
     0: "Cheating",
@@ -38,11 +34,7 @@ SKELETON = [
 KPT_CONF_THRESHOLD = 0.3
 IOU_THRESHOLD = 0.3
 
-_SUSPICIOUS_LOWER = {s.lower() for s in SUSPICIOUS_LABELS}
-
-# cam_name -> { instance_id -> { "box": tuple, "label": str } }
-_person_instances:    dict[str, dict] = {}
-_last_alert_time:     dict[str, float] = {}
+_person_instances: dict[str, dict] = {}
 _next_instance_id = 0
 
 
@@ -72,17 +64,6 @@ def _iou(boxA, boxB):
 
 
 def _match_persons(prev_instances, current_detections):
-    """
-    Match current detections to previous person instances via IoU.
-
-    prev_instances:     dict { inst_id -> { "box", "label" } }
-    current_detections: list of { "box", "label", "kpts_xy", "kpts_conf", "conf" }
-
-    Returns:
-        matched:     dict { inst_id -> detection_dict }   surviving instances
-        new_dets:    list of detection_dicts              newly appeared persons
-        lost_ids:    list of inst_ids that left the frame
-    """
     used_prev = set()
     matched = {}
     new_dets = []
@@ -172,42 +153,17 @@ def process(frame, cam_name):
     prev_instances = _person_instances.get(cam_name, {})
     matched, new_dets, lost_ids = _match_persons(prev_instances, current_detections)
 
-    # Assign IDs to new persons and log their initial state
     for det in new_dets:
         inst_id = _new_id()
         matched[inst_id] = det
-        # Always log on first appearance
         _log_behavior(cam_name, inst_id, det["label"], datetime.now())
 
-        if det["label"].lower() in _SUSPICIOUS_LOWER:
-            alert_key = f"{cam_name}_{inst_id}_{det['label']}"
-            now = time.time()
-            if alert_key not in _last_alert_time or now - _last_alert_time[alert_key] > ALERT_COOLDOWN:
-                for number in PHONE_NUMBERS:
-                    gsm.send_sms(number, f"ALERT: {det['label']} behavior detected on {cam_name} (Person {inst_id})")
-                _last_alert_time[alert_key] = now
-
-    # Check label changes for existing (matched) persons
     for inst_id, det in matched.items():
         if inst_id in prev_instances:
             prev_label = prev_instances[inst_id]["label"]
             if det["label"] != prev_label:
                 _log_behavior(cam_name, inst_id, det["label"], datetime.now())
 
-                if det["label"].lower() in _SUSPICIOUS_LOWER:
-                    alert_key = f"{cam_name}_{inst_id}_{det['label']}"
-                    now = time.time()
-                    if alert_key not in _last_alert_time or now - _last_alert_time[alert_key] > ALERT_COOLDOWN:
-                        for number in PHONE_NUMBERS:
-                            gsm.send_sms(number, f"ALERT: {det['label']} behavior detected on {cam_name} (Person {inst_id})")
-                        _last_alert_time[alert_key] = now
-
-    # Clean up state for persons who left
-    for inst_id in lost_ids:
-        _last_alert_time.pop(f"{cam_name}_{inst_id}_Cheating", None)
-        _last_alert_time.pop(f"{cam_name}_{inst_id}_Normal", None)
-
-    # Draw all tracked persons
     person_boxes = []
     for inst_id, det in matched.items():
         x1, y1, x2, y2 = det["box"]

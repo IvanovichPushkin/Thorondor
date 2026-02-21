@@ -18,9 +18,9 @@ class LogRecorder:
         self.log_queue = queue.Queue(maxsize=max_queue)
         self.worker = None
         self.lock = threading.Lock()
-        self._stop_signal = object()  # sentinel to stop thread
+        self._stop_signal = object()
         self.directory_set = False
-        self.log_entries = []  # Store log entries for PDF generation
+        self.log_entries = []
 
     def set_directory_popup(self):
         root = tk.Tk()
@@ -39,27 +39,22 @@ class LogRecorder:
         if self.recording:
             return
         self.recording = True
-        self.log_entries = []  # Clear previous entries
-        # Ensure directory exists before recording
+        self.log_entries = []
         os.makedirs(self.output_dir, exist_ok=True)
         with self.log_queue.mutex:
             self.log_queue.queue.clear()
-        
-        # Create filename with user-friendly format: "Argus Report Log - Jan 17, 2026.pdf"
+
         now = datetime.now()
-        month_name = now.strftime("%b")  # Short month name (Jan, Feb, etc.)
-        day = now.strftime("%d")
-        year = now.strftime("%Y")
-        friendly_name = f"Argus Report Log - {month_name} {day}, {year}.pdf"
+        friendly_name = f"Argus Report Log - {now.strftime('%b')} {now.strftime('%d')}, {now.strftime('%Y')}.pdf"
         self.filename = os.path.join(self.output_dir, friendly_name)
-        
+
         self.worker = threading.Thread(target=self._record_worker, daemon=True)
         self.worker.start()
         print(f"[INFO] Log recording started: {self.filename}")
 
     def _record_worker(self):
         start_time = datetime.now()
-        
+
         while self.recording or not self.log_queue.empty():
             try:
                 log_entry = self.log_queue.get(timeout=0.1)
@@ -69,65 +64,39 @@ class LogRecorder:
             if log_entry is self._stop_signal:
                 continue
 
-            # Store log entry for PDF generation
             self.log_entries.append(log_entry)
-        
-        # Generate PDF after recording stops
+
         self._generate_pdf(start_time)
         print(f"[INFO] Log recording stopped and saved: {self.filename}")
 
     def _generate_pdf(self, start_time):
-        """Generate a user-friendly PDF report"""
         doc = SimpleDocTemplate(self.filename, pagesize=letter,
                                 rightMargin=72, leftMargin=72,
                                 topMargin=72, bottomMargin=18)
-        
-        # Container for the 'Flowable' objects
         elements = []
-        
-        # Define styles
         styles = getSampleStyleSheet()
-        
-        # Custom title style
+
         title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=24,
-            textColor='darkblue',
-            spaceAfter=30,
-            alignment=TA_CENTER,
-            fontName='Helvetica-Bold'
+            'CustomTitle', parent=styles['Heading1'],
+            fontSize=24, textColor='darkblue', spaceAfter=30,
+            alignment=TA_CENTER, fontName='Helvetica-Bold'
         )
-        
-        # Custom heading style
         heading_style = ParagraphStyle(
-            'CustomHeading',
-            parent=styles['Heading2'],
-            fontSize=14,
-            textColor='darkblue',
-            spaceAfter=12,
-            spaceBefore=12,
-            fontName='Helvetica-Bold'
+            'CustomHeading', parent=styles['Heading2'],
+            fontSize=14, textColor='darkblue', spaceAfter=12,
+            spaceBefore=12, fontName='Helvetica-Bold'
         )
-        
-        # Custom body style
         body_style = ParagraphStyle(
-            'CustomBody',
-            parent=styles['BodyText'],
-            fontSize=10,
-            fontName='Courier',
-            leftIndent=20
+            'CustomBody', parent=styles['BodyText'],
+            fontSize=10, fontName='Courier', leftIndent=20
         )
-        
-        # Add title
-        title = Paragraph("ARGUS DETECTION REPORT", title_style)
-        elements.append(title)
+
+        elements.append(Paragraph("ARGUS DETECTION REPORT", title_style))
         elements.append(Spacer(1, 0.2 * inch))
-        
-        # Add metadata
+
         stop_time = datetime.now()
         duration = stop_time - start_time
-        
+
         metadata = f"""
         <b>Report Generated:</b> {stop_time.strftime("%B %d, %Y at %I:%M:%S %p")}<br/>
         <b>Recording Started:</b> {start_time.strftime("%B %d, %Y at %I:%M:%S %p")}<br/>
@@ -135,40 +104,33 @@ class LogRecorder:
         <b>Duration:</b> {str(duration).split('.')[0]}<br/>
         <b>Total Events:</b> {len(self.log_entries)}
         """
-        
+
         elements.append(Paragraph(metadata, styles['Normal']))
         elements.append(Spacer(1, 0.3 * inch))
-        
-        # Add detection log section
         elements.append(Paragraph("DETECTION LOG", heading_style))
         elements.append(Spacer(1, 0.1 * inch))
-        
-        # Add log entries
+
         if self.log_entries:
             for entry in self.log_entries:
-                # Escape special characters for XML
                 safe_entry = entry.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                 elements.append(Paragraph(safe_entry, body_style))
                 elements.append(Spacer(1, 0.05 * inch))
         else:
             elements.append(Paragraph("No detection events recorded.", styles['Normal']))
-        
-        # Build PDF
+
         doc.build(elements)
 
     def write(self, log_message):
-        """Add a log message to the queue"""
         if self.recording:
             try:
                 self.log_queue.put_nowait(log_message)
             except queue.Full:
-                pass  # drop logs to prevent blocking
+                pass
 
     def stop(self):
         if not self.recording:
             return
         self.recording = False
         print("[INFO] Stopping log recording...")
-        # Wait for worker to finish
         if self.worker and self.worker.is_alive():
             self.worker.join(timeout=5)

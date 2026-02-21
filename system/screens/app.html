@@ -4,7 +4,7 @@
     <title>Argus - Multi-Camera Detection</title>
     <link rel="stylesheet" type="text/css" href="/static/styles/wcapp.css" />
   </head>
-  <body>
+  <body data-default-cam="{{ default_cam }}">
     <div class="container">
       <div class="video">
         <h2>
@@ -18,11 +18,10 @@
           </span>
         </h2>
 
-        <!-- Keep multi-camera buttons for logic -->
         <div class="camera-buttons">
           {% for cam in cams %}
-          <button class="btn cam-btn" onclick="switchCam('{{cam}}')">
-            {{cam}}
+          <button class="btn cam-btn" onclick="switchCam('{{ cam }}')">
+            {{ cam }}
           </button>
           {% endfor %}
         </div>
@@ -75,17 +74,13 @@
         <div id="progressText">0%</div>
         <div id="saveWarning">SAVING VIDEO - DO NOT CLOSE APP</div>
 
-        <!-- WebRTC video element (primary) -->
         <video
           id="videoStream"
           autoplay
           playsinline
           muted
-          style="width: 100%; height: auto; display: none"
+          style="width: 100%; height: auto"
         ></video>
-
-        <!-- MJPEG fallback shown by default -->
-        <img id="fallbackStream" src="/video/cam1" />
       </div>
 
       <div class="log">
@@ -93,6 +88,6 @@
         <div id="log"></div>
       </div>
     </div>
+    <script src="/static/scripts/app.js"></script>
   </body>
-  <script src="/static/scripts/app.js"></script>
 </html>

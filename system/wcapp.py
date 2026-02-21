@@ -3,8 +3,8 @@ import sys
 import threading
 import time
 import atexit
-import os
-from collections import deque # Added for latency fix
+from contextlib import asynccontextmanager
+from collections import deque
 
 # CRITICAL: Must be set before importing aiortc on Windows
 if sys.platform == "win32":
@@ -12,125 +12,182 @@ if sys.platform == "win32":
 
 import cv2
 import numpy as np
-from flask import Flask, Response, render_template, jsonify, request
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 
 from core.vision import generate_frames, latest_annotated
 from core.config import FRAME_HEIGHT, FRAME_WIDTH, LOG_FILE, CSV_FILE
-from core.record_video import VideoRecorder
-from core.record_logs import LogRecorder
-from core.routes import register_routes
 from core.recorders import init_recorders
+from core.routes import register_routes
 
-app = Flask(__name__, 
-            template_folder='screens', 
-            static_folder='screens/static', 
-            static_url_path='/static')
+# ─────────────────────────────────────────────
+# Global state — populated inside lifespan only
+# ─────────────────────────────────────────────
+CAMERA_SOURCES   = {}
+frames           = {}
+recorder         = None
+log_recorder     = None
+_cam_backend     = 0   # confirmed-working backend index
 
-# -----------------------------
-# Persistent event loop
-# -----------------------------
-_loop = asyncio.new_event_loop()
+# ─────────────────────────────────────────────
+# Camera probe — finds which index + backend
+# actually delivers a real frame on this machine
+# ─────────────────────────────────────────────
+def _find_working_camera():
+    """
+    Try camera indices 0-5 across backends.
+    MSMF error -1072875772 = camera locked by another process.
+    isOpened() lies — we must actually cap.read() to confirm.
+    """
+    backends = [cv2.CAP_MSMF, cv2.CAP_DSHOW, 0] if sys.platform == "win32" else [0]
 
-def _start_loop(loop):
-    asyncio.set_event_loop(loop)
-    loop.run_forever()
+    for idx in range(6):
+        for backend in backends:
+            try:
+                cap = (cv2.VideoCapture(idx, backend)
+                       if backend != 0 else cv2.VideoCapture(idx))
+                if not cap.isOpened():
+                    cap.release()
+                    continue
+                ret, _ = cap.read()
+                cap.release()
+                if ret:
+                    print(f"[INFO] Camera found: index={idx}, backend={backend}")
+                    return idx, backend
+            except Exception:
+                pass
 
-threading.Thread(target=_start_loop, args=(_loop,), daemon=True).start()
+    print("[WARN] No working camera found — defaulting index=0, backend=default.")
+    return 0, 0
 
-def run_async(coro):
-    return asyncio.run_coroutine_threadsafe(coro, _loop).result(timeout=15)
 
-# -----------------------------
-# FPS Detection (Literal Match)
-# -----------------------------
-CAMERA_SOURCES = {"cam1": 0}
+def _open_cap(src, backend):
+    if backend != 0:
+        cap = cv2.VideoCapture(src, backend)
+        if cap.isOpened():
+            return cap
+        cap.release()
+    return cv2.VideoCapture(src)
 
-# Open briefly to grab hardware speed before initializing recorders
-cap_init = cv2.VideoCapture(CAMERA_SOURCES["cam1"], cv2.CAP_DSHOW)
-actual_fps = cap_init.get(cv2.CAP_PROP_FPS)
-if actual_fps <= 0 or actual_fps > 120:
-    actual_fps = 30.0  # Fallback only if driver lies
-cap_init.release()
 
-print(f"[INFO] Hardware FPS detected: {actual_fps}")
-
-# -----------------------------
-# Recorders
-# -----------------------------
-recorder, log_recorder = init_recorders(fps=actual_fps)
-
-# -----------------------------
-# Camera Setup (Optimized for Latency)
-# -----------------------------
-# Using deque maxlen=1 to ensure we always have the freshest frame
-frames = {name: deque(maxlen=1) for name in CAMERA_SOURCES.keys()}
-
-def capture_frames(cam_name, src):
-    cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+# ─────────────────────────────────────────────
+# Capture thread
+# ─────────────────────────────────────────────
+def capture_frames(cam_name, src, backend, fps):
+    cap = _open_cap(src, backend)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-    cap.set(cv2.CAP_PROP_FPS, actual_fps)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    
-    # These prevent "glitching" and blur during fast movement
-    cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1) 
+    cap.set(cv2.CAP_PROP_FPS,          fps)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE,   1)
+    cap.set(cv2.CAP_PROP_AUTOFOCUS,    0)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
 
     if not cap.isOpened():
         print(f"[ERROR] Could not open webcam: {src}")
         return
-        
+
     consecutive_failures = 0
     while True:
-        # Flush the driver buffer to stop the "burst" effect
-        for _ in range(2):
-            cap.grab()
-            
-        ret, frame = cap.retrieve()
+        ret, frame = cap.read()
         if not ret:
             consecutive_failures += 1
             if consecutive_failures > 30:
-                print(f"[WARN] Webcam {cam_name} failing — reopening...")
+                print(f"[WARN] Webcam {cam_name} failing — re-probing...")
                 cap.release()
                 time.sleep(1)
-                cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+                new_idx, new_backend = _find_working_camera()
+                cap = _open_cap(new_idx, new_backend)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 consecutive_failures = 0
-            time.sleep(0.01)
+            time.sleep(0.005)
             continue
-            
         consecutive_failures = 0
-        # .copy() prevents thread-tearing glitches
         frames[cam_name].append(frame.copy())
 
-for name, src in CAMERA_SOURCES.items():
-    threading.Thread(target=capture_frames, args=(name, src), daemon=True).start()
 
-# Wait up to 5s for webcam (Updated check for deque)
-print("[INFO] Waiting for webcam...")
-for _ in range(50):
-    if len(frames.get("cam1", [])) > 0:
-        print("[INFO] Webcam ready.")
-        break
-    time.sleep(0.1)
-else:
-    print("[WARN] Webcam not ready after 5s — continuing anyway.")
-
-# -----------------------------
-# Start MJPEG/AI loop
-# -----------------------------
 def ai_processing_loop(cam_name):
     for _ in generate_frames(cam_name, frames_override=frames, recorder=recorder):
-        # Prevent CPU starvation
         time.sleep(0.001)
 
-for cam_name in CAMERA_SOURCES:
-    threading.Thread(target=ai_processing_loop, args=(cam_name,), daemon=True).start()
 
-# -----------------------------
-# WebRTC Video Track
-# -----------------------------
+# ─────────────────────────────────────────────
+# Lifespan — ALL camera/recorder init lives here
+# so it only runs once in the real server process,
+# NOT in fastapi dev's reloader watcher process.
+# ─────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global CAMERA_SOURCES, frames, recorder, log_recorder, _cam_backend
+
+    # Probe camera
+    cam_idx, _cam_backend = _find_working_camera()
+    CAMERA_SOURCES = {"cam1": cam_idx}
+    frames = {"cam1": deque(maxlen=1)}
+
+    # Detect FPS
+    cap_init = _open_cap(cam_idx, _cam_backend)
+    actual_fps = cap_init.get(cv2.CAP_PROP_FPS)
+    if actual_fps <= 0 or actual_fps > 120:
+        actual_fps = 30.0
+    cap_init.release()
+    print(f"[INFO] Hardware FPS detected: {actual_fps}")
+
+    # Init recorders
+    recorder, log_recorder = init_recorders(fps=actual_fps)
+
+    # Start capture thread
+    threading.Thread(
+        target=capture_frames,
+        args=("cam1", cam_idx, _cam_backend, actual_fps),
+        daemon=True
+    ).start()
+
+    # Wait up to 5s for first frame
+    print("[INFO] Waiting for webcam...")
+    for _ in range(50):
+        if len(frames.get("cam1", [])) > 0:
+            print("[INFO] Webcam ready.")
+            break
+        await asyncio.sleep(0.1)
+    else:
+        print("[WARN] Webcam not ready after 5s — continuing anyway.")
+
+    # Start AI loop
+    threading.Thread(
+        target=ai_processing_loop, args=("cam1",), daemon=True
+    ).start()
+
+    # Register routes now that recorder/frames/CAMERA_SOURCES are ready
+    register_routes(app, recorder, log_recorder, generate_frames, frames,
+                    CAMERA_SOURCES, handle_offer, LOG_FILE, follow,
+                    templates=templates, template_name="wcapp.html")
+
+    yield  # ← server is running
+
+    # Cleanup on shutdown
+    try:
+        with open(LOG_FILE, "w") as f: f.truncate(0)
+        with open(CSV_FILE, "w") as f: f.truncate(0)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────
+# App
+# ─────────────────────────────────────────────
+app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="screens/static"), name="static")
+templates = Jinja2Templates(directory="screens")
+
+
+# ─────────────────────────────────────────────
+# WebRTC Track
+# ─────────────────────────────────────────────
 class ArgusVideoTrack(VideoStreamTrack):
     kind = "video"
 
@@ -141,27 +198,22 @@ class ArgusVideoTrack(VideoStreamTrack):
     async def recv(self):
         pts, time_base = await self.next_timestamp()
 
-        # Read the raw annotated numpy frame
         frame = latest_annotated.get(self.cam_name)
         if frame is None:
             frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
             cv2.putText(frame, "Waiting for camera...", (30, FRAME_HEIGHT // 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        # Thread-safe copy for WebRTC encoding
-        frame_to_send = frame.copy()
-        frame_rgb   = cv2.cvtColor(frame_to_send, cv2.COLOR_BGR2RGB)
+        frame_rgb = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2RGB)
         video_frame = VideoFrame.from_ndarray(frame_rgb, format="rgb24")
-        video_frame.pts       = pts
+        video_frame.pts = pts
         video_frame.time_base = time_base
-        
-        # Keep track steady
-        await asyncio.sleep(0.01)
         return video_frame
 
-# -----------------------------
-# WebRTC offer handler
-# -----------------------------
+
+# ─────────────────────────────────────────────
+# WebRTC Offer Handler
+# ─────────────────────────────────────────────
 async def handle_offer(cam_name, sdp, type_):
     pc = RTCPeerConnection()
 
@@ -176,9 +228,10 @@ async def handle_offer(cam_name, sdp, type_):
     await pc.setLocalDescription(answer)
     return pc.localDescription
 
-# -----------------------------
+
+# ─────────────────────────────────────────────
 # Log Streaming
-# -----------------------------
+# ─────────────────────────────────────────────
 def follow(logfile):
     logfile.seek(0, 2)
     while True:
@@ -186,26 +239,20 @@ def follow(logfile):
         if not line:
             time.sleep(0.1)
             continue
-        if log_recorder.recording:
+        if log_recorder and log_recorder.recording:
             log_recorder.write(line.strip())
         yield f"data: {line}\n\n"
 
-# -----------------------------
-# Routes
-# -----------------------------
-register_routes(app, recorder, log_recorder, generate_frames, frames, 
-                CAMERA_SOURCES, run_async, handle_offer, LOG_FILE, follow, 
-                template_name='wcapp.html')
 
-# -----------------------------
-# Run
-# -----------------------------
-def cleanup_files():
-    with open(LOG_FILE, "w") as f: f.truncate(0)
-    with open(CSV_FILE, "w") as f: f.truncate(0)
-
-atexit.register(cleanup_files)
-
+# ─────────────────────────────────────────────
+# Entry point — always use uvicorn directly,
+# NEVER "fastapi dev" for camera apps
+# ─────────────────────────────────────────────
 if __name__ == "__main__":
-    cleanup_files()
-    app.run(debug=False, host="0.0.0.0", port=5000, threaded=True)
+    uvicorn.run(
+        "wcapp:app",
+        host="0.0.0.0",
+        port=5000,
+        log_level="warning",
+        reload=False        # reload=False is critical — reloader breaks camera lock
+    )

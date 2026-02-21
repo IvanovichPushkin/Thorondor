@@ -4,14 +4,14 @@ let progressInterval = null;
 // Initialize everything once the DOM is fully loaded
 document.addEventListener("DOMContentLoaded", () => {
   initLogStream();
-  startWebRTC(); // Attempt WebRTC handshake
+  startWebRTC();
 });
 
 // --- WebRTC Logic ---
 async function startWebRTC() {
   const statusEl = document.getElementById("webrtcStatus");
   const videoEl = document.getElementById("videoStream");
-  const fallbackEl = document.getElementById("fallbackStream");
+  // const fallbackEl = document.getElementById("fallbackStream");
 
   pc = new RTCPeerConnection({
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -23,7 +23,7 @@ async function startWebRTC() {
     if (evt.streams && evt.streams[0]) {
       videoEl.srcObject = evt.streams[0];
       videoEl.style.display = "block";
-      fallbackEl.style.display = "none";
+      // fallbackEl.style.display = "none";
       statusEl.textContent = "WebRTC Active";
     }
   };
@@ -32,7 +32,7 @@ async function startWebRTC() {
     if (pc.iceConnectionState === "failed") {
       statusEl.textContent = "WebRTC Failed - Using MJPEG";
       videoEl.style.display = "none";
-      fallbackEl.style.display = "block";
+      // fallbackEl.style.display = "block";
     }
   };
 
@@ -169,26 +169,19 @@ function initLogStream() {
   const evtSource = new EventSource("/log_stream");
 
   evtSource.onmessage = function (e) {
-    // Create a new log line element
     const line = document.createElement("div");
     line.textContent = e.data;
 
-    // Optional: color coding
     if (e.data.includes("Cheating")) {
-      line.style.color = "#dc2626"; // red
+      line.style.color = "#dc2626";
       line.style.fontWeight = "600";
     } else if (e.data.includes("Normal")) {
-      line.style.color = "#16a34a"; // green
+      line.style.color = "#16a34a";
     } else if (e.data.includes("Object")) {
-      line.style.color = "#2563eb"; // blue
+      line.style.color = "#2563eb";
     }
 
     logDiv.appendChild(line);
-
-    // Auto-scroll to bottom smoothly
-    logDiv.scrollTo({
-      top: logDiv.scrollHeight,
-      behavior: "smooth",
-    });
+    logDiv.scrollTo({ top: logDiv.scrollHeight, behavior: "smooth" });
   };
 }
