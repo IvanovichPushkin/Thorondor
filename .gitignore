@@ -12,8 +12,16 @@ system/unused/
 # Logs
 system/detections.log
 system/detections.csv
+system/logs/
+system/recordings/
 # Ignore "ffmpeg.exe"
 system/bin/ffmpeg.exe
+#Ignore cache files
+__pycache__/
+machine_learning/__pycache__/
+system/__pycache__/
+system/core/detections/__pycache__/
+system/core/__pycache__/
 
 
 # ==========Ignore for now!==========
