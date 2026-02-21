@@ -162,6 +162,14 @@ video {
   animation: blinker 1s linear infinite;
 }
 
+#logStatus {
+  color: #ef4444;
+  font-weight: bold;
+  display: none;
+  margin-left: 8px;
+  animation: blinker 1s linear infinite;
+}
+
 #webrtcStatus {
   font-size: 0.75em;
   font-weight: 500;

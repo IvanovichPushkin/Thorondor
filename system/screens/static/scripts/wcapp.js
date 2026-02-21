@@ -141,6 +141,15 @@ function doLogRec(action) {
       document.getElementById("stopLogB").style.display = isStart
         ? "block"
         : "none";
+      const logStatus = document.getElementById("logStatus");
+      if (isStart) {
+        logStatus.style.display = "inline";
+        logStatus.style.color = "#ef4444";
+        logStatus.style.fontWeight = "bold";
+        logStatus.style.animation = "blinker 1s linear infinite";
+      } else {
+        logStatus.style.display = "none";
+      }
     });
 }
 
