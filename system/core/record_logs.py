@@ -9,6 +9,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from core.config import LOG_FILE
 
 class LogRecorder:
     def __init__(self, max_queue=1000):
@@ -40,10 +41,22 @@ class LogRecorder:
         if self.recording:
             return
         self.recording = True
-        self.log_entries = []
         os.makedirs(self.output_dir, exist_ok=True)
         with self.log_queue.mutex:
             self.log_queue.queue.clear()
+
+        # Pre-load every line already in detections.log so the PDF contains
+        # the full session history, not just what happened after Record was pressed.
+        self.log_entries = []
+        try:
+            if os.path.exists(LOG_FILE):
+                with open(LOG_FILE, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            self.log_entries.append(line)
+        except Exception as e:
+            print(f"[WARN] Could not pre-load existing logs: {e}")
 
         now = datetime.now()
         friendly_name = f"Argus Report Log - {now.strftime('%b')} {now.strftime('%d')}, {now.strftime('%Y')} {now.strftime('%I-%M-%S %p')}.pdf"
