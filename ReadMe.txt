@@ -37,23 +37,23 @@ pip install -r requirements.txt
 
 
 
-__________________________This app is using flask, here's how to run:__________________________
+__________________________This app is using FastAPI, here's how to run:__________________________
 
 ============= For webcam =============
 
-flask --app wcapp.py run
+python wcapp.py
 
 or
 
-flask --app wcapp run --host 0.0.0.0 --port=5000
+py wcapp.py
 
 ============= For an actual camera device =============
 
-flask --app app.py run
+python app.py
 
 or
 
-flask --app app run --host 0.0.0.0 --port=5000
+py app.py
 
 
 
