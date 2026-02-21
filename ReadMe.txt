@@ -57,6 +57,17 @@ py app.py
 
 
 
+__________________________Using low-end device? Try this__________________________
+
+cd system
+py export_onnx.py
+
+============= P.S. Only run this if you run the app without seeing this: =============
+
+ONNX ✓ fast mode
+
+
+
 __________________________When updating the project every time there is an update__________________________
 
 git fetch origin main

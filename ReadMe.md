@@ -40,6 +40,15 @@ python app.py
 
 py app.py
 
+# Using low-end device? Try this
+
+cd system<br>
+py export_onnx.py
+
+### P.S. Only run this if you run the app without seeing this:
+
+ONNX ✓ fast mode
+
 # When updating the project every time there is an update
 
 git fetch origin main<br>
