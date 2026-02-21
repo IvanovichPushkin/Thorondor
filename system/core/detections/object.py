@@ -1,6 +1,6 @@
 import cv2
 import csv
-import time
+import threading
 from datetime import datetime
 
 from core.yolo_models import yolo
@@ -16,15 +16,34 @@ OBJECT_LABELS = {
     2: "Smartwatch",
     3: "Watch",
 }
+OBJECT_COLORS     = {k: (0, 225, 255) for k in OBJECT_LABELS}
+OBJECT_TEXT_COLOR = (0, 140, 255)
+_LABEL_TO_CLS     = {v: k for k, v in OBJECT_LABELS.items()}
 
-OBJECT_COLORS = {
-    0: (0, 225, 255),   # yellow box
-    1: (0, 225, 255),
-    2: (0, 225, 255),
-    3: (0, 225, 255),
-}
+IOU_THRESHOLD = 0.3
 
-OBJECT_TEXT_COLOR = (0, 140, 255)  # orange text
+_last_object_state = {}
+_next_instance_id  = 0
+
+# ── Buffered file I/O ─────────────────────────────────────────────────────────
+_log_lock   = threading.Lock()
+_log_file   = None
+_csv_file   = None
+_csv_writer = None
+
+def _init_io():
+    global _log_file, _csv_file, _csv_writer
+    if _log_file is None:
+        _log_file   = open(LOG_FILE, "a", buffering=1)
+        _csv_file   = open(CSV_FILE, "a", newline="", buffering=1)
+        _csv_writer = csv.writer(_csv_file)
+
+def _write_event(timestamp, cam_name, event, label, inst_id):
+    _init_io()
+    with _log_lock:
+        _log_file.write(f"[{timestamp.strftime('%H:%M:%S')}] {cam_name}: {event}: {label} (id={inst_id})\n")
+        _csv_writer.writerow([timestamp, cam_name, event, label, inst_id])
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _get_label(cls):
     return OBJECT_LABELS.get(cls, f"Class{cls}")
@@ -32,20 +51,15 @@ def _get_label(cls):
 def _get_color(cls):
     return OBJECT_COLORS.get(cls, (0, 225, 255))
 
-
-_last_object_state = {}
-_next_instance_id  = 0
-
-IOU_THRESHOLD = 0.3
-
+def _new_id():
+    global _next_instance_id
+    _next_instance_id += 1
+    return _next_instance_id
 
 def _iou(boxA, boxB):
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[2], boxB[2])
-    yB = min(boxA[3], boxB[3])
-    interW = max(0, xB - xA)
-    interH = max(0, yB - yA)
+    xA = max(boxA[0], boxB[0]); yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2]); yB = min(boxA[3], boxB[3])
+    interW = max(0, xB - xA);   interH = max(0, yB - yA)
     interArea = interW * interH
     if interArea == 0:
         return 0.0
@@ -53,52 +67,34 @@ def _iou(boxA, boxB):
     areaB = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
     return interArea / float(areaA + areaB - interArea)
 
-
 def _match_instances(prev_instances, current_detections):
-    used_prev = set()
+    used_prev        = set()
     matched_instances = {}
     unmatched_current = []
-
     for label, box, conf in current_detections:
         best_id, best_iou = None, IOU_THRESHOLD
         for inst_id, (prev_label, prev_box) in prev_instances.items():
-            if inst_id in used_prev:
-                continue
-            if prev_label != label:
+            if inst_id in used_prev or prev_label != label:
                 continue
             iou = _iou(box, prev_box)
             if iou > best_iou:
                 best_iou = iou
-                best_id = inst_id
-
+                best_id  = inst_id
         if best_id is not None:
             matched_instances[best_id] = (label, box)
             used_prev.add(best_id)
         else:
             unmatched_current.append((label, box, conf))
-
     lost_ids = [i for i in prev_instances if i not in used_prev]
     return matched_instances, unmatched_current, lost_ids
 
 
-def _new_id():
-    global _next_instance_id
-    _next_instance_id += 1
-    return _next_instance_id
-
-
-# ── Label → class index reverse lookup (built once) ──────────────────────────
-_LABEL_TO_CLS = {v: k for k, v in OBJECT_LABELS.items()}
-
-
 def predict(frame, cam_name):
     """Run YOLO inference + instance tracking. Returns matched instances dict.
-    Does NOT draw — call draw() separately so results can be cached and redrawn
-    each pipeline frame without re-running inference.
+    Does NOT draw — call draw() separately for cache+redraw pattern.
     """
     results = yolo.predict(frame, imgsz=320, conf=YOLO_CONF_THRESHOLD, verbose=False)
     current_detections = []
-
     for r in results:
         for box in r.boxes:
             cls             = int(box.cls[0].item())
@@ -113,37 +109,27 @@ def predict(frame, cam_name):
     for label, box, conf in new_detections:
         inst_id = _new_id()
         matched[inst_id] = (label, box)
-
-        timestamp = datetime.now()
-        with open(LOG_FILE, "a") as f:
-            f.write(f"[{timestamp.strftime('%H:%M:%S')}] {cam_name}: Object Detected: {label} (id={inst_id})\n")
-        with open(CSV_FILE, "a", newline="") as f:
-            csv.writer(f).writerow([timestamp, cam_name, "Object Detected", label, inst_id])
+        _write_event(datetime.now(), cam_name, "Object Detected", label, inst_id)
 
     for inst_id in lost_ids:
         label, _ = prev_instances[inst_id]
-        timestamp = datetime.now()
-        with open(LOG_FILE, "a") as f:
-            f.write(f"[{timestamp.strftime('%H:%M:%S')}] {cam_name}: Object Left: {label} (id={inst_id})\n")
-        with open(CSV_FILE, "a", newline="") as f:
-            csv.writer(f).writerow([timestamp, cam_name, "Object Left", label, inst_id])
+        _write_event(datetime.now(), cam_name, "Object Left", label, inst_id)
 
     _last_object_state[cam_name] = matched
     return matched
 
 
 def draw(frame, matched):
-    """Draw cached matched instances onto frame. Fast — pure OpenCV, no inference."""
+    """Draw cached matched instances. Fast — pure OpenCV, no inference."""
     for inst_id, (label, (x1, y1, x2, y2)) in matched.items():
         color = _get_color(_LABEL_TO_CLS.get(label, 0))
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
         cv2.putText(frame, label, (x1, y1 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, OBJECT_TEXT_COLOR, 2)
-    current_labels = {label for label, _ in matched.values()}
-    return frame, current_labels
+    return frame, {label for label, _ in matched.values()}
 
 
 def process(frame, cam_name):
-    """Legacy blocking path (kept for compatibility). Prefer predict()+draw()."""
+    """Legacy blocking path. Prefer predict()+draw()."""
     matched = predict(frame, cam_name)
     return draw(frame, matched)

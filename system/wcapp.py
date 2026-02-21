@@ -1,3 +1,16 @@
+import os
+# ── CRITICAL: Set BEFORE any numpy/cv2/onnxruntime/torch imports ──────────────
+# ONNX Runtime spawns OMP_NUM_THREADS per session. With 3 sessions (pose, obj,
+# desk) on default settings = 3 × N_CPU_CORES threads all fighting each other
+# after ~5s warmup, starving the uvicorn/aiortc event loop → WebRTC lag.
+# 2 threads per session is the sweet spot: fast inference, no thread thrash.
+os.environ.setdefault("OMP_NUM_THREADS",      "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS",      "2")
+os.environ.setdefault("NUMEXPR_NUM_THREADS",  "2")
+os.environ.setdefault("OMP_WAIT_POLICY",      "PASSIVE")  # idle-wait not spin-wait
+# ─────────────────────────────────────────────────────────────────────────────
+
 import asyncio
 import sys
 import threading
@@ -28,24 +41,17 @@ from core.routes import register_routes
 # ─────────────────────────────────────────────
 # Global state — populated inside lifespan only
 # ─────────────────────────────────────────────
-CAMERA_SOURCES   = {}
-frames           = {}
-recorder         = None
-log_recorder     = None
-_cam_backend     = 0   # confirmed-working backend index
+CAMERA_SOURCES = {}
+frames         = {}
+recorder       = None
+log_recorder   = None
+_cam_backend   = 0
 
 # ─────────────────────────────────────────────
-# Camera probe — finds which index + backend
-# actually delivers a real frame on this machine
+# Camera probe
 # ─────────────────────────────────────────────
 def _find_working_camera():
-    """
-    Try camera indices 0-5 across backends.
-    MSMF error -1072875772 = camera locked by another process.
-    isOpened() lies — we must actually cap.read() to confirm.
-    """
     backends = [cv2.CAP_MSMF, cv2.CAP_DSHOW, 0] if sys.platform == "win32" else [0]
-
     for idx in range(6):
         for backend in backends:
             try:
@@ -61,10 +67,8 @@ def _find_working_camera():
                     return idx, backend
             except Exception:
                 pass
-
     print("[WARN] No working camera found — defaulting index=0, backend=default.")
     return 0, 0
-
 
 def _open_cap(src, backend):
     if backend != 0:
@@ -74,12 +78,10 @@ def _open_cap(src, backend):
         cap.release()
     return cv2.VideoCapture(src)
 
-
 # ─────────────────────────────────────────────
 # Capture thread
 # ─────────────────────────────────────────────
 def capture_frames(cam_name, src, backend, fps):
-    # On Windows, DSHOW handles MJPG/720p better than MSMF
     if sys.platform == "win32":
         cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
         if not cap.isOpened():
@@ -87,7 +89,6 @@ def capture_frames(cam_name, src, backend, fps):
     else:
         cap = _open_cap(src, backend)
 
-    # Force MJPG codec BEFORE resolution — unlocks 720p on most webcams
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
@@ -119,20 +120,46 @@ def capture_frames(cam_name, src, backend, fps):
         consecutive_failures = 0
         frames[cam_name].append(frame.copy())
 
-
 def ai_processing_loop(cam_name):
     for _ in generate_frames(cam_name, frames_override=frames, recorder=recorder):
         time.sleep(0.001)
 
+# ─────────────────────────────────────────────
+# WebRTC frame-ready signal
+# ─────────────────────────────────────────────
+# Per-camera asyncio.Event — set by the AI pipeline the instant a new annotated
+# frame lands. recv() waits on this instead of sending duplicate frames, which
+# is the main cause of WebRTC jitter-buffer lag.
+_frame_events: dict[str, asyncio.Event] = {}
+
+def _get_frame_event(cam_name: str) -> asyncio.Event:
+    if cam_name not in _frame_events:
+        _frame_events[cam_name] = asyncio.Event()
+    return _frame_events[cam_name]
+
+def signal_new_frame(cam_name: str):
+    """Called from AI pipeline thread when latest_annotated is updated."""
+    ev = _frame_events.get(cam_name)
+    if ev:
+        try:
+            loop = asyncio.get_event_loop()
+            loop.call_soon_threadsafe(ev.set)
+        except Exception:
+            pass
 
 # ─────────────────────────────────────────────
-# Lifespan — ALL camera/recorder init lives here
-# so it only runs once in the real server process,
-# NOT in fastapi dev's reloader watcher process.
+# Lifespan
 # ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global CAMERA_SOURCES, frames, recorder, log_recorder, _cam_backend
+
+    # Clear stale log/csv from previous run at startup
+    try:
+        open(LOG_FILE, "w").close()
+        open(CSV_FILE, "w").close()
+    except Exception:
+        pass
 
     # Probe camera
     cam_idx, _cam_backend = _find_working_camera()
@@ -167,24 +194,21 @@ async def lifespan(app: FastAPI):
     else:
         print("[WARN] Webcam not ready after 5s — continuing anyway.")
 
+    # Wire pipeline → WebRTC signal
+    import core.vision as _vision
+    _vision.on_frame_ready = signal_new_frame
+
     # Start AI loop
     threading.Thread(
         target=ai_processing_loop, args=("cam1",), daemon=True
     ).start()
 
-    # Register routes now that recorder/frames/CAMERA_SOURCES are ready
+    # Register routes
     register_routes(app, recorder, log_recorder, generate_frames, frames,
                     CAMERA_SOURCES, handle_offer, LOG_FILE, follow,
                     templates=templates, template_name="wcapp.html")
 
     yield  # ← server is running
-
-    # Cleanup on shutdown
-    try:
-        with open(LOG_FILE, "w") as f: f.truncate(0)
-        with open(CSV_FILE, "w") as f: f.truncate(0)
-    except Exception:
-        pass
 
 
 # ─────────────────────────────────────────────
@@ -208,13 +232,32 @@ class ArgusVideoTrack(VideoStreamTrack):
     async def recv(self):
         pts, time_base = await self.next_timestamp()
 
-        frame = latest_annotated.get(self.cam_name)
-        if frame is None:
-            frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
-            cv2.putText(frame, "Waiting for camera...", (30, FRAME_HEIGHT // 2),
+        # Ensure event exists (must be created inside the event loop)
+        _get_frame_event(self.cam_name)
+        ev = _frame_events[self.cam_name]
+
+        # Wait for a genuinely new frame (up to 66ms = 15fps floor).
+        # Prevents flooding the browser with duplicate frames — the primary
+        # cause of WebRTC jitter-buffer lag.
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=0.066)
+        except asyncio.TimeoutError:
+            pass
+        ev.clear()
+
+        raw = latest_annotated.get(self.cam_name)
+        if raw is None:
+            raw = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+            cv2.putText(raw, "Waiting for camera...", (30, FRAME_HEIGHT // 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        frame_rgb = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2RGB)
+        # Run BGR→RGB in thread pool — keeps the event loop free
+        frame_bgr = raw.copy()
+        loop = asyncio.get_event_loop()
+        frame_rgb = await loop.run_in_executor(
+            None, lambda: cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        )
+
         video_frame = VideoFrame.from_ndarray(frame_rgb, format="rgb24")
         video_frame.pts = pts
         video_frame.time_base = time_base
@@ -238,7 +281,7 @@ async def handle_offer(cam_name, sdp, type_):
 
     # Munge answer SDP to set high bitrate (4Mbps) for crisp 720p
     sdp_lines = answer.sdp.split("\r\n")
-    new_lines = []
+    new_lines  = []
     for line in sdp_lines:
         new_lines.append(line)
         if line.startswith("m=video"):
@@ -265,8 +308,7 @@ def follow(logfile):
 
 
 # ─────────────────────────────────────────────
-# Entry point — always use uvicorn directly,
-# NEVER "fastapi dev" for camera apps
+# Entry point
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     uvicorn.run(
@@ -274,5 +316,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=5000,
         log_level="warning",
-        reload=False        # reload=False is critical — reloader breaks camera lock
+        reload=False
     )

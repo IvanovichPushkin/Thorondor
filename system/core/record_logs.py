@@ -46,7 +46,7 @@ class LogRecorder:
             self.log_queue.queue.clear()
 
         now = datetime.now()
-        friendly_name = f"Argus Report Log - {now.strftime('%b')} {now.strftime('%d')}, {now.strftime('%Y')}.pdf"
+        friendly_name = f"Argus Report Log - {now.strftime('%b')} {now.strftime('%d')}, {now.strftime('%Y')} {now.strftime('%I-%M-%S %p')}.pdf"
         self.filename = os.path.join(self.output_dir, friendly_name)
 
         self.worker = threading.Thread(target=self._record_worker, daemon=True)

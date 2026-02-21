@@ -4,7 +4,8 @@ from core.record_logs import LogRecorder
 
 def init_recorders(fps=15):
     recorder = VideoRecorder(fps=fps)
-    recorder.directory_set = False
+    # directory_set stays True — VideoRecorder already defaults to ./recordings/
+    # which is created on init. No need for a popup to unlock recording.
 
     log_recorder = LogRecorder()
 
