@@ -14,7 +14,7 @@ DESK_LABELS = {
     0: "Desk",
 }
 
-DESK_COLOR = (0, 128, 255)
+DESK_COLOR = (255, 0, 0)
 
 _SNAP_GRID = 10
 IOU_THRESHOLD = 0.3
@@ -88,8 +88,9 @@ def process(frame, cam_name, person_boxes=None):
     if person_boxes is None:
         person_boxes = []
 
+    # FIX: imgsz 640 -> 320 for ~2x faster inference on CPU
     desk_results = yolo_desk.predict(
-        frame, imgsz=640, conf=YOLO_DESK_CONF_THRESHOLD, verbose=False
+        frame, imgsz=320, conf=YOLO_DESK_CONF_THRESHOLD, verbose=False
     )
     current_boxes = []
 

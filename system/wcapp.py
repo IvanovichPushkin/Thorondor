@@ -79,13 +79,23 @@ def _open_cap(src, backend):
 # Capture thread
 # ─────────────────────────────────────────────
 def capture_frames(cam_name, src, backend, fps):
-    cap = _open_cap(src, backend)
+    # On Windows, DSHOW handles MJPG/720p better than MSMF
+    if sys.platform == "win32":
+        cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = _open_cap(src, backend)
+    else:
+        cap = _open_cap(src, backend)
+
+    # Force MJPG codec BEFORE resolution — unlocks 720p on most webcams
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-    cap.set(cv2.CAP_PROP_FPS,          fps)
     cap.set(cv2.CAP_PROP_BUFFERSIZE,   1)
-    cap.set(cv2.CAP_PROP_AUTOFOCUS,    0)
-    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+
+    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"[INFO] Camera resolution: {actual_w}x{actual_h} (requested {FRAME_WIDTH}x{FRAME_HEIGHT})")
 
     if not cap.isOpened():
         print(f"[ERROR] Could not open webcam: {src}")
@@ -225,6 +235,16 @@ async def handle_offer(cam_name, sdp, type_):
     pc.addTrack(ArgusVideoTrack(cam_name))
     await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
     answer = await pc.createAnswer()
+
+    # Munge answer SDP to set high bitrate (4Mbps) for crisp 720p
+    sdp_lines = answer.sdp.split("\r\n")
+    new_lines = []
+    for line in sdp_lines:
+        new_lines.append(line)
+        if line.startswith("m=video"):
+            new_lines.append("b=AS:4000")
+    answer = RTCSessionDescription(sdp="\r\n".join(new_lines), type=answer.type)
+
     await pc.setLocalDescription(answer)
     return pc.localDescription
 

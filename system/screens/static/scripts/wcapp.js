@@ -5,6 +5,12 @@ let progressInterval = null;
 document.addEventListener("DOMContentLoaded", () => {
   initLogStream();
   startWebRTC();
+
+  // enable buttons immediately since we use hardcoded dirs
+  const startVideoBtn = document.getElementById("startB");
+  const startLogBtn = document.getElementById("startLogB");
+  if (startVideoBtn) startVideoBtn.disabled = false;
+  if (startLogBtn) startLogBtn.disabled = false;
 });
 
 // --- WebRTC Logic ---
@@ -60,39 +66,22 @@ async function startWebRTC() {
 
 // --- Directory and Recording Logic ---
 function saveDir() {
-  fetch("/set_dir", { method: "POST" })
-    .then((r) => r.json())
-    .then((data) => {
-      if (data.path) {
-        alert("Saving videos to: " + data.path);
-        document.getElementById("startB").disabled = false;
-      }
-    });
+  // video folder is fixed at project recordings/
+  alert("Videos will be saved to the project recordings folder.");
+  document.getElementById("startB").disabled = false;
 }
 
 function saveLogDir() {
-  fetch("/set_log_dir", { method: "POST" })
-    .then((r) => r.json())
-    .then((data) => {
-      if (data.path) {
-        alert("Saving logs to: " + data.path);
-        document.getElementById("startLogB").disabled = false;
-      }
-    });
+  // logs folder is fixed at project logs/
+  alert("Logs will be saved to the project logs folder.");
+  document.getElementById("startLogB").disabled = false;
 }
 
 function doRec(action) {
   let isStart = action === "start";
   fetch("/" + action + "_record")
-    .then((response) => {
-      if (!response.ok) {
-        alert("Please click SET VIDEO DIR first!");
-        return;
-      }
-      return response.json();
-    })
+    .then((response) => response.json())
     .then((data) => {
-      if (!data) return;
       document.getElementById("startB").style.display = isStart
         ? "none"
         : "block";
@@ -103,9 +92,8 @@ function doRec(action) {
         ? "inline"
         : "none";
 
-      if (!isStart) {
-        handleProgress();
-      } else if (progressInterval) {
+      if (!isStart) handleProgress();
+      else if (progressInterval) {
         clearInterval(progressInterval);
         toggleProgressUI(false);
       }
@@ -145,22 +133,14 @@ function toggleProgressUI(show) {
 function doLogRec(action) {
   let isStart = action === "start";
   fetch("/" + action + "_log_record")
-    .then((response) => {
-      if (!response.ok) {
-        alert("Please click SET LOG DIR first!");
-        return;
-      }
-      return response.json();
-    })
+    .then((response) => response.json())
     .then((data) => {
-      if (!data) return;
       document.getElementById("startLogB").style.display = isStart
         ? "none"
         : "block";
       document.getElementById("stopLogB").style.display = isStart
         ? "block"
         : "none";
-      alert(isStart ? "Log recording started!" : "Log saved!");
     });
 }
 
@@ -177,8 +157,10 @@ function initLogStream() {
       line.style.fontWeight = "600";
     } else if (e.data.includes("Normal")) {
       line.style.color = "#16a34a";
+    } else if (e.data.includes("Desk")) {
+      line.style.color = "#2563eb"; // blue for desk
     } else if (e.data.includes("Object")) {
-      line.style.color = "#2563eb";
+      line.style.color = "#f97316"; // orange for object
     }
 
     logDiv.appendChild(line);

@@ -18,11 +18,13 @@ OBJECT_LABELS = {
 }
 
 OBJECT_COLORS = {
-    0: (0, 225, 255),
+    0: (0, 225, 255),   # yellow box
     1: (0, 225, 255),
     2: (0, 225, 255),
     3: (0, 225, 255),
 }
+
+OBJECT_TEXT_COLOR = (0, 140, 255)  # orange text
 
 def _get_label(cls):
     return OBJECT_LABELS.get(cls, f"Class{cls}")
@@ -85,8 +87,16 @@ def _new_id():
     return _next_instance_id
 
 
-def process(frame, cam_name):
-    results = yolo.predict(frame, imgsz=640, conf=YOLO_CONF_THRESHOLD, verbose=False)
+# ── Label → class index reverse lookup (built once) ──────────────────────────
+_LABEL_TO_CLS = {v: k for k, v in OBJECT_LABELS.items()}
+
+
+def predict(frame, cam_name):
+    """Run YOLO inference + instance tracking. Returns matched instances dict.
+    Does NOT draw — call draw() separately so results can be cached and redrawn
+    each pipeline frame without re-running inference.
+    """
+    results = yolo.predict(frame, imgsz=320, conf=YOLO_CONF_THRESHOLD, verbose=False)
     current_detections = []
 
     for r in results:
@@ -94,13 +104,7 @@ def process(frame, cam_name):
             cls             = int(box.cls[0].item())
             conf_val        = float(box.conf[0].item())
             label           = _get_label(cls)
-            color           = _get_color(cls)
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, f"{label} {conf_val:.2f}", (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
-
             current_detections.append((label, (x1, y1, x2, y2), conf_val))
 
     prev_instances = _last_object_state.get(cam_name, {})
@@ -125,6 +129,21 @@ def process(frame, cam_name):
             csv.writer(f).writerow([timestamp, cam_name, "Object Left", label, inst_id])
 
     _last_object_state[cam_name] = matched
+    return matched
 
+
+def draw(frame, matched):
+    """Draw cached matched instances onto frame. Fast — pure OpenCV, no inference."""
+    for inst_id, (label, (x1, y1, x2, y2)) in matched.items():
+        color = _get_color(_LABEL_TO_CLS.get(label, 0))
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(frame, label, (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, OBJECT_TEXT_COLOR, 2)
     current_labels = {label for label, _ in matched.values()}
     return frame, current_labels
+
+
+def process(frame, cam_name):
+    """Legacy blocking path (kept for compatibility). Prefer predict()+draw()."""
+    matched = predict(frame, cam_name)
+    return draw(frame, matched)

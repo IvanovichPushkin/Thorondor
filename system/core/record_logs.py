@@ -13,27 +13,28 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 class LogRecorder:
     def __init__(self, max_queue=1000):
         self.recording = False
-        self.output_dir = os.path.normpath("logs")
+        self.output_dir = os.path.join(os.getcwd(), "logs")  # ← relative to project
+        os.makedirs(self.output_dir, exist_ok=True)
         self.filename = None
         self.log_queue = queue.Queue(maxsize=max_queue)
         self.worker = None
         self.lock = threading.Lock()
         self._stop_signal = object()
-        self.directory_set = False
+        self.directory_set = True
         self.log_entries = []
 
-    def set_directory_popup(self):
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        selected_dir = filedialog.askdirectory(title="Select Log Save Directory")
-        root.destroy()
-        if selected_dir:
-            self.output_dir = os.path.normpath(selected_dir)
-            os.makedirs(self.output_dir, exist_ok=True)
-            self.directory_set = True
-            return self.output_dir
-        return None
+    # def set_directory_popup(self):
+    #     root = tk.Tk()
+    #     root.withdraw()
+    #     root.attributes("-topmost", True)
+    #     selected_dir = filedialog.askdirectory(title="Select Log Save Directory")
+    #     root.destroy()
+    #     if selected_dir:
+    #         self.output_dir = os.path.normpath(selected_dir)
+    #         os.makedirs(self.output_dir, exist_ok=True)
+    #         self.directory_set = True
+    #         return self.output_dir
+    #     return None
 
     def start(self):
         if self.recording:

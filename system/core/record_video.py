@@ -13,8 +13,8 @@ class VideoRecorder:
         self.process = None
         self.recording = False
         self.finalizing = False
-        self.directory_set = False
-        self.output_dir = os.path.normpath(os.path.join(os.getcwd(), "recordings"))
+        self.directory_set = True
+        self.output_dir = os.path.join(os.getcwd(), "recordings")  # ← relative to project
         os.makedirs(self.output_dir, exist_ok=True)
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -97,11 +97,11 @@ class VideoRecorder:
             else:
                 self.status_msg = "Success: " + os.path.basename(self.current_file)
 
-    def set_directory_popup(self):
-        root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
-        path = filedialog.askdirectory(); root.destroy()
-        if path:
-            self.output_dir = os.path.normpath(path)
-            self.directory_set = True
-            return path
-        return None
+    # def set_directory_popup(self):
+    #     root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
+    #     path = filedialog.askdirectory(); root.destroy()
+    #     if path:
+    #         self.output_dir = os.path.normpath(path)
+    #         self.directory_set = True
+    #         return path
+    #     return None

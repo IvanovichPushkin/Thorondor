@@ -15,23 +15,11 @@
             id="webrtcStatus"
             style="font-size: 0.6em; color: #666; margin-left: 10px"
           >
-            connecting...</span
-          >
+            connecting...
+          </span>
         </h2>
         <div class="overlay">
-          <button
-            class="btn"
-            onclick="saveDir()"
-            style="background: #1877f2; color: white"
-          >
-            SET VIDEO DIR
-          </button>
-          <button
-            id="startB"
-            class="btn rec-btn"
-            onclick="doRec('start')"
-            disabled
-          >
+          <button id="startB" class="btn rec-btn" onclick="doRec('start')">
             RECORD VIDEO
           </button>
           <button id="stopB" class="btn stop-btn" onclick="doRec('stop')">
@@ -39,17 +27,9 @@
           </button>
           <br style="width: 100%" />
           <button
-            class="btn"
-            onclick="saveLogDir()"
-            style="background: #9c27b0; color: white"
-          >
-            SET LOG DIR
-          </button>
-          <button
             id="startLogB"
             class="btn log-rec-btn"
             onclick="doLogRec('start')"
-            disabled
           >
             RECORD LOG
           </button>

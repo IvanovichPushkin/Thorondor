@@ -119,9 +119,10 @@ def _log_behavior(cam_name, inst_id, label, timestamp):
         ])
 
 
-def process(frame, cam_name):
+def predict(frame, cam_name):
+    """Run inference only. Returns raw matched detections dict. Does NOT draw."""
     pose_results = pose_model.predict(
-        frame, imgsz=320, conf=POSE_CONF_THRESHOLD, verbose=False
+        frame, imgsz=256, conf=POSE_CONF_THRESHOLD, verbose=False
     )
 
     current_detections = []
@@ -164,6 +165,16 @@ def process(frame, cam_name):
             if det["label"] != prev_label:
                 _log_behavior(cam_name, inst_id, det["label"], datetime.now())
 
+    _person_instances[cam_name] = {
+        inst_id: {"box": det["box"], "label": det["label"]}
+        for inst_id, det in matched.items()
+    }
+
+    return matched  # raw detections only, no drawing
+
+
+def draw(frame, matched):
+    """Draw cached detections onto any fresh frame. No ghosting."""
     person_boxes = []
     for inst_id, det in matched.items():
         x1, y1, x2, y2 = det["box"]
@@ -179,10 +190,10 @@ def process(frame, cam_name):
         )
         _draw_skeleton(frame, det["kpts_xy"], det["kpts_conf"], color)
         person_boxes.append((x1, y1, x2, y2))
-
-    _person_instances[cam_name] = {
-        inst_id: {"box": det["box"], "label": det["label"]}
-        for inst_id, det in matched.items()
-    }
-
     return frame, person_boxes
+
+
+def process(frame, cam_name):
+    """Legacy wrapper: predict + draw in one call."""
+    matched = predict(frame, cam_name)
+    return draw(frame, matched)

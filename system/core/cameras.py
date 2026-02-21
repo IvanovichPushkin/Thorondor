@@ -5,20 +5,13 @@ from collections import deque
 from core.config import CAMERA_SOURCES, FRAME_WIDTH, FRAME_HEIGHT
 
 # === Shared frame storage for low latency ===
-# deque maxlen=1 drops old RTSP packets automatically — always fresh frame.
 frames = {name: deque(maxlen=1) for name in CAMERA_SOURCES.keys()}
 
 def capture_frames(cam_name, src):
-    """
-    Background thread to capture and flush RTSP/USB camera buffers.
-    """
-    # For RTSP (Tapo), OpenCV works best with ffmpeg backend (default)
     cap = cv2.VideoCapture(src)
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-
-    # Critical for RTSP: minimize internal OpenCV buffering
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     if not cap.isOpened():
@@ -30,13 +23,10 @@ def capture_frames(cam_name, src):
     consecutive_failures = 0
 
     while True:
-        # FLUSH: Grab multiple frames without decoding to drain the RTSP buffer.
-        # Tapo cams buffer several frames server-side — 1 grab isn't enough.
-        # 4 grabs ensures we decode the absolute latest frame, not a stale one.
-        for _ in range(4):
+        # FIX: Reduced from 4 grabs to 2 — still flushes stale RTSP frames but saves CPU
+        for _ in range(2):
             cap.grab()
 
-        # RETRIEVE: Decode only the freshest frame
         ret, frame = cap.retrieve()
 
         if not ret:
@@ -52,7 +42,6 @@ def capture_frames(cam_name, src):
             continue
 
         consecutive_failures = 0
-        # .copy() prevents thread-tearing when WebRTC reads simultaneously
         frames[cam_name].append(frame.copy())
 
 # === Background camera capture threads ===

@@ -75,40 +75,34 @@ function switchCam(camName) {
 window.addEventListener("load", () => startWebRTC(currentCam));
 
 // --- Recording ---
-function saveDir() {
-  fetch("/set_dir", { method: "POST" })
-    .then((r) => r.json())
-    .then((data) => {
-      if (data.path) {
-        alert("Saving videos to: " + data.path);
-        document.getElementById("startB").disabled = false;
-      }
-    });
-}
 
-function saveLogDir() {
-  fetch("/set_log_dir", { method: "POST" })
-    .then((r) => r.json())
-    .then((data) => {
-      if (data.path) {
-        alert("Saving logs to: " + data.path);
-        document.getElementById("startLogB").disabled = false;
-      }
-    });
-}
+// function saveDir() {
+//   fetch("/set_dir", { method: "POST" })
+//     .then((r) => r.json())
+//     .then((data) => {
+//       if (data.path) {
+//         alert("Saving videos to: " + data.path);
+//         document.getElementById("startB").disabled = false;
+//       }
+//     });
+// }
+
+// function saveLogDir() {
+//   fetch("/set_log_dir", { method: "POST" })
+//     .then((r) => r.json())
+//     .then((data) => {
+//       if (data.path) {
+//         alert("Saving logs to: " + data.path);
+//         document.getElementById("startLogB").disabled = false;
+//       }
+//     });
+// }
 
 function doRec(action) {
   let isStart = action === "start";
   fetch("/" + action + "_record")
-    .then((response) => {
-      if (!response.ok) {
-        alert("Please click SET VIDEO DIR first!");
-        return;
-      }
-      return response.json();
-    })
+    .then((response) => response.json())
     .then((data) => {
-      if (!data) return;
       document.getElementById("startB").style.display = isStart
         ? "none"
         : "block";
@@ -126,6 +120,36 @@ function doRec(action) {
       }
     });
 }
+
+// function doRec(action) {
+//   let isStart = action === "start";
+//   fetch("/" + action + "_record")
+//     .then((response) => {
+//       if (!response.ok) {
+//         alert("Please click SET VIDEO DIR first!");
+//         return;
+//       }
+//       return response.json();
+//     })
+//     .then((data) => {
+//       if (!data) return;
+//       document.getElementById("startB").style.display = isStart
+//         ? "none"
+//         : "block";
+//       document.getElementById("stopB").style.display = isStart
+//         ? "block"
+//         : "none";
+//       document.getElementById("status").style.display = isStart
+//         ? "inline"
+//         : "none";
+
+//       if (!isStart) handleProgress();
+//       else if (progressInterval) {
+//         clearInterval(progressInterval);
+//         toggleProgressUI(false);
+//       }
+//     });
+// }
 
 function handleProgress() {
   const inner = document.getElementById("progressBar");
@@ -158,28 +182,41 @@ function toggleProgressUI(show) {
   document.getElementById("progressText").style.display = display;
   document.getElementById("saveWarning").style.display = display;
 }
-
 function doLogRec(action) {
   let isStart = action === "start";
   fetch("/" + action + "_log_record")
-    .then((response) => {
-      if (!response.ok) {
-        alert("Please click SET LOG DIR first!");
-        return;
-      }
-      return response.json();
-    })
+    .then((response) => response.json())
     .then((data) => {
-      if (!data) return;
       document.getElementById("startLogB").style.display = isStart
         ? "none"
         : "block";
       document.getElementById("stopLogB").style.display = isStart
         ? "block"
         : "none";
-      alert(isStart ? "Log recording started!" : "Log saved!");
     });
 }
+
+// function doLogRec(action) {
+//   let isStart = action === "start";
+//   fetch("/" + action + "_log_record")
+//     .then((response) => {
+//       if (!response.ok) {
+//         alert("Please click SET LOG DIR first!");
+//         return;
+//       }
+//       return response.json();
+//     })
+//     .then((data) => {
+//       if (!data) return;
+//       document.getElementById("startLogB").style.display = isStart
+//         ? "none"
+//         : "block";
+//       document.getElementById("stopLogB").style.display = isStart
+//         ? "block"
+//         : "none";
+//       alert(isStart ? "Log recording started!" : "Log saved!");
+//     });
+// }
 
 // --- Live Log Stream ---
 function initLogStream() {
@@ -204,4 +241,13 @@ function initLogStream() {
   };
 }
 
-document.addEventListener("DOMContentLoaded", initLogStream);
+document.addEventListener("DOMContentLoaded", () => {
+  initLogStream();
+  startWebRTC();
+
+  // enable buttons immediately since we use hardcoded dirs
+  const startVideoBtn = document.getElementById("startB");
+  const startLogBtn = document.getElementById("startLogB");
+  if (startVideoBtn) startVideoBtn.disabled = false;
+  if (startLogBtn) startLogBtn.disabled = false;
+});

@@ -6,9 +6,9 @@ CSV_FILE  = "detections.csv"
 CAMERA_SOURCES = {
     # Format: "rtsp://username:password@ip:554/stream1" (stream1=HD, stream2=low)
     # All cameras must be on the same 2.4 GHz network
-    "Camera 1": "rtsp://FINALBOSS:FINALBOSS@192.168.1.9:554/stream2",
-    "Camera 2": "rtsp://FINALBOSS:FINALBOSS@192.168.1.9:554/stream2",
-    "Camera 3": "rtsp://FINALBOSS:FINALBOSS@192.168.1.9:554/stream2",
+    "Camera 1": "rtsp://FINALBOSS:IWILLGRADUATE@192.168.254.110:554/stream2",
+    "Camera 2": "rtsp://FINALBOSS:IWILLGRADUATE@192.168.254.110:554/stream2",
+    "Camera 3": "rtsp://FINALBOSS:IWILLGRADUATE@192.168.254.110:554/stream2",
 }
 
 # === RESOLUTION ===
@@ -22,8 +22,8 @@ POSE_MODEL_PATH      = "../machine_learning/runs/pose/argus_pose_estimation/weig
 
 # === DETECTION THRESHOLDS ===
 YOLO_CONF_THRESHOLD      = 0.75
-YOLO_DESK_CONF_THRESHOLD = 0.45
-POSE_CONF_THRESHOLD      = 0.15
+YOLO_DESK_CONF_THRESHOLD = 0.55
+POSE_CONF_THRESHOLD      = 0.55
 
 # # === GSM / ALERTS ===
 # PHONE_NUMBERS    = ["+639XXXXXXXXX", "+639YYYYYYYYY"]
