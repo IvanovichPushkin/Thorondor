@@ -33,7 +33,7 @@ from fastapi.templating import Jinja2Templates
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 
-from core.vision import generate_frames, latest_annotated
+from core.vision import generate_frames, latest_annotated, latest_raw
 from core.config import FRAME_HEIGHT, FRAME_WIDTH, LOG_FILE, CSV_FILE
 from core.recorders import init_recorders
 from core.routes import register_routes

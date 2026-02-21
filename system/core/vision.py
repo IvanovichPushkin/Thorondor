@@ -7,6 +7,7 @@ from core.detections.desk import predict as desk_predict, draw as desk_draw
 from core.detections.object import predict as obj_predict, draw as obj_draw
 
 latest_annotated = {}
+latest_raw       = {}   # raw camera frame with no AI annotations
 
 # Optional callback — wcapp.py sets this to signal_new_frame so WebRTC recv()
 # wakes immediately when a fresh frame is ready instead of polling.
@@ -141,6 +142,9 @@ def run_ai_pipeline(cam_name, frame):
 
         # One copy shared read-only across all three inference threads.
         original = frame.copy()
+
+        # Store raw frame for clean (no-annotation) video recording
+        latest_raw[cam_name] = original
 
         _ensure_pose_thread(cam_name)
         _ensure_obj_thread(cam_name)
