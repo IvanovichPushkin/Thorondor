@@ -23,16 +23,12 @@ class VideoRecorder:
             os.path.join(current_dir, "..", "bin", "ffmpeg.exe")
         )
 
-        self.current_file      = "None"
-        self.current_file_raw  = "None"
-        self.status_msg        = "Ready"
-        self._proc_annotated   = None
-        self._proc_raw         = None
-        self._feed_thread      = None
-        self._cam_name         = "cam1"
+        self.current_file  = "None"
+        self.status_msg    = "Ready"
 
-        # Measured FPS tracking — rolling window of frame timestamps
-        self._fps_window = deque(maxlen=30)
+        # Per-camera state — keyed by cam_name
+        self._cameras      = {}   # cam_name -> {proc_ann, proc_raw, ann_path, raw_path, fps_window}
+        self._feed_threads = []
 
     def _kill_zombies(self):
         if platform.system() == "Windows":
@@ -41,25 +37,22 @@ class VideoRecorder:
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
 
-    def _measured_fps(self):
-        """Return FPS measured from actual pipeline output, capped to hw fps."""
-        if len(self._fps_window) < 2:
+    def _measured_fps(self, fps_window):
+        if len(fps_window) < 2:
             return self.fps
-        elapsed = self._fps_window[-1] - self._fps_window[0]
+        elapsed = fps_window[-1] - fps_window[0]
         if elapsed <= 0:
             return self.fps
-        measured = (len(self._fps_window) - 1) / elapsed
-        # Clamp: never exceed hardware fps, never go below 1
+        measured = (len(fps_window) - 1) / elapsed
         return max(1.0, min(measured, self.fps))
 
     def _spawn_ffmpeg(self, output_path, width, height):
-        """Spawn one FFmpeg process that reads rawvideo from stdin."""
         cmd = [
             self.ffmpeg_exe, "-y",
             "-f",        "rawvideo",
             "-vcodec",   "rawvideo",
             "-pix_fmt",  "bgr24",
-            "-s",        f"{width}x{height}",   # actual frame size, not config assumption
+            "-s",        f"{width}x{height}",
             "-r",        str(self.fps),
             "-i",        "pipe:0",
             "-c:v",      "libx264",
@@ -69,7 +62,6 @@ class VideoRecorder:
             "-movflags", "+faststart",
             output_path,
         ]
-
         si = None
         if platform.system() == "Windows":
             si = subprocess.STARTUPINFO()
@@ -83,51 +75,83 @@ class VideoRecorder:
             startupinfo=si,
         )
 
-    def start(self, cam_name="cam1"):
+    def _get_frame_size(self, cam_name):
+        """Detect actual frame dimensions from live feed. Wait up to 3s."""
+        from core.vision import latest_annotated, latest_raw
+        for _ in range(30):
+            ann = latest_annotated.get(cam_name)
+            raw = latest_raw.get(cam_name)
+            frame = ann if ann is not None else raw
+            if frame is not None:
+                h, w = frame.shape[:2]
+                print(f"[INFO] Recorder [{cam_name}] frame size: {w}x{h}")
+                return w, h
+            time.sleep(0.1)
+        print(f"[WARN] Recorder [{cam_name}] no frame found — using config {FRAME_WIDTH}x{FRAME_HEIGHT}")
+        return FRAME_WIDTH, FRAME_HEIGHT
+
+    def start(self, cam_name=None, cam_names=None):
+        """
+        Start recording all cameras simultaneously.
+        cam_name: single camera (str)
+        cam_names: list of cameras
+        If neither given, records all cameras from CAMERA_SOURCES.
+        """
         if self.recording or self.finalizing:
             return
         self._kill_zombies()
-        self._cam_name = cam_name
-        self._fps_window.clear()
+        self._cameras = {}
+        self._feed_threads = []
 
+        # Build list of cameras to record
+        if cam_names:
+            targets = cam_names
+        elif cam_name:
+            targets = [cam_name]
+        else:
+            from core.config import CAMERA_SOURCES
+            targets = list(CAMERA_SOURCES.keys())
+
+        print(f"[INFO] Recorder starting for cameras: {targets}")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.current_file     = os.path.join(self.output_dir, f"Argus_Record_{ts}.mp4")
-        self.current_file_raw = os.path.join(self.output_dir, f"Argus_Record_{ts}_raw.mp4")
+        self.current_file = os.path.join(self.output_dir, f"Argus_Record_{ts}.mp4")
 
         try:
-            # Detect actual frame dimensions from the live feed.
-            # Wait up to 3s in case the pipeline hasn't produced a frame yet.
-            from core.vision import latest_annotated, latest_raw
-            actual_frame = None
-            for _ in range(30):
-                _ann = latest_annotated.get(cam_name)
-                _raw = latest_raw.get(cam_name)
-                actual_frame = _ann if _ann is not None else _raw
-                if actual_frame is not None:
-                    break
-                time.sleep(0.1)
+            for cn in targets:
+                w, h = self._get_frame_size(cn)
+                safe_name = cn.replace(" ", "_")
+                ann_path = os.path.join(self.output_dir, f"Argus_{safe_name}_{ts}.mp4")
+                raw_path = os.path.join(self.output_dir, f"Argus_{safe_name}_{ts}_raw.mp4")
 
-            if actual_frame is not None:
-                h, w = actual_frame.shape[:2]
-            else:
-                w, h = FRAME_WIDTH, FRAME_HEIGHT
-                print(f"[WARN] No frame available for {cam_name} — falling back to config size {w}x{h}")
-            print(f"[INFO] Recorder using frame size: {w}x{h} for {cam_name}")
+                proc_ann = self._spawn_ffmpeg(ann_path, w, h)
+                proc_raw = self._spawn_ffmpeg(raw_path, w, h)
 
-            self._proc_annotated = self._spawn_ffmpeg(self.current_file,     w, h)
-            self._proc_raw       = self._spawn_ffmpeg(self.current_file_raw, w, h)
+                time.sleep(0.3)
+                if proc_ann.poll() is not None or proc_raw.poll() is not None:
+                    print(f"[ERROR] Recorder [{cn}] ffmpeg failed to start")
+                    continue
 
-            time.sleep(0.5)
-            if self._proc_annotated.poll() is not None or self._proc_raw.poll() is not None:
-                self.status_msg = "Failed to start FFmpeg"
-                self._cleanup()
+                self._cameras[cn] = {
+                    "proc_ann":   proc_ann,
+                    "proc_raw":   proc_raw,
+                    "ann_path":   ann_path,
+                    "raw_path":   raw_path,
+                    "fps_window": deque(maxlen=30),
+                }
+                print(f"[INFO] Recorder [{cn}] ffmpeg started OK")
+
+            if not self._cameras:
+                self.status_msg = "Failed to start any camera recorder"
                 return
 
             self.recording  = True
-            self.status_msg = "Recording..."
+            self.status_msg = f"Recording {len(self._cameras)} camera(s)..."
 
-            self._feed_thread = threading.Thread(target=self._feed_frames, daemon=True)
-            self._feed_thread.start()
+            # One feed thread per camera
+            for cn in self._cameras:
+                t = threading.Thread(target=self._feed_frames, args=(cn,), daemon=True)
+                t.start()
+                self._feed_threads.append(t)
 
         except Exception as e:
             import traceback
@@ -135,40 +159,46 @@ class VideoRecorder:
             traceback.print_exc()
             self.status_msg = f"Error: {e}"
 
-    def _feed_frames(self):
-        """Push annotated + raw frames into their respective ffmpeg processes."""
+    def _feed_frames(self, cam_name):
         from core.vision import latest_annotated, latest_raw
 
-        last_annotated_id = None
-        last_raw_id       = None
-        interval          = 1.0 / self.fps
-        frames_written    = 0
+        cam        = self._cameras[cam_name]
+        proc_ann   = cam["proc_ann"]
+        proc_raw   = cam["proc_raw"]
+        fps_window = cam["fps_window"]
+
+        last_ann_id    = None
+        last_raw_id    = None
+        interval       = 1.0 / self.fps
+        frames_written = 0
+
+        print(f"[INFO] Recorder [{cam_name}] feed thread started — watching key '{cam_name}'")
 
         while self.recording:
             t_start = time.perf_counter()
 
-            annotated = latest_annotated.get(self._cam_name)
-            raw       = latest_raw.get(self._cam_name)
+            annotated = latest_annotated.get(cam_name)
+            raw       = latest_raw.get(cam_name)
 
-            if annotated is not None and id(annotated) != last_annotated_id:
-                last_annotated_id = id(annotated)
+            if annotated is not None and id(annotated) != last_ann_id:
+                last_ann_id = id(annotated)
                 try:
-                    self._proc_annotated.stdin.write(annotated.tobytes())
-                    self._fps_window.append(t_start)
-                    interval = 1.0 / self._measured_fps()
+                    proc_ann.stdin.write(annotated.tobytes())
+                    fps_window.append(t_start)
+                    interval = 1.0 / self._measured_fps(fps_window)
                     frames_written += 1
                     if frames_written == 1:
-                        print(f"[INFO] Recorder writing frames: shape={annotated.shape}")
+                        print(f"[INFO] Recorder [{cam_name}] first frame written: shape={annotated.shape}")
                 except Exception as e:
-                    print(f"[ERROR] Recorder annotated write failed: {e}")
+                    print(f"[ERROR] Recorder [{cam_name}] annotated write failed: {e}")
                     break
 
             if raw is not None and id(raw) != last_raw_id:
                 last_raw_id = id(raw)
                 try:
-                    self._proc_raw.stdin.write(raw.tobytes())
+                    proc_raw.stdin.write(raw.tobytes())
                 except Exception as e:
-                    print(f"[ERROR] Recorder raw write failed: {e}")
+                    print(f"[ERROR] Recorder [{cam_name}] raw write failed: {e}")
                     break
 
             elapsed = time.perf_counter() - t_start
@@ -176,30 +206,29 @@ class VideoRecorder:
             if sleep_t > 0:
                 time.sleep(sleep_t)
 
-        print(f"[INFO] Recorder _feed_frames exited. Total frames written: {frames_written}")
+        print(f"[INFO] Recorder [{cam_name}] feed thread done. Frames: {frames_written}")
 
     def stop(self):
         if not self.recording:
             return
-
         self.recording  = False
         self.finalizing = True
         self.status_msg = "Finalizing..."
 
         def finalize():
-            if self._feed_thread and self._feed_thread.is_alive():
-                self._feed_thread.join(timeout=3)
+            for t in self._feed_threads:
+                if t.is_alive():
+                    t.join(timeout=3)
+            self._feed_threads.clear()
 
-            for proc in (self._proc_annotated, self._proc_raw):
-                if proc:
+            for cn, cam in self._cameras.items():
+                for proc in (cam["proc_ann"], cam["proc_raw"]):
                     try:
                         proc.stdin.close()
                         proc.wait(timeout=15)
                     except Exception:
                         proc.kill()
 
-            self._proc_annotated = None
-            self._proc_raw       = None
             self._cleanup()
             self.finalizing = False
 
@@ -208,19 +237,20 @@ class VideoRecorder:
     def _cleanup(self):
         time.sleep(0.5)
         saved = []
-        for path in (self.current_file, self.current_file_raw):
-            if path and os.path.exists(path):
-                size = os.path.getsize(path)
-                print(f"[INFO] Recorder file: {os.path.basename(path)} | size: {size} bytes")
-                if size < 5000:
-                    print(f"[WARN] Recorder deleting empty file: {os.path.basename(path)}")
-                    os.remove(path)
+        for cn, cam in self._cameras.items():
+            for path in (cam["ann_path"], cam["raw_path"]):
+                if os.path.exists(path):
+                    size = os.path.getsize(path)
+                    print(f"[INFO] Recorder [{cn}] {os.path.basename(path)} | {size} bytes")
+                    if size < 5000:
+                        print(f"[WARN] Recorder [{cn}] deleting empty file: {os.path.basename(path)}")
+                        os.remove(path)
+                    else:
+                        saved.append(os.path.basename(path))
                 else:
-                    saved.append(os.path.basename(path))
-            else:
-                print(f"[WARN] Recorder file not found: {path}")
+                    print(f"[WARN] Recorder [{cn}] file missing: {path}")
 
         if saved:
-            self.status_msg = "Saved: " + ", ".join(saved)
+            self.status_msg = f"Saved {len(saved)} file(s)"
         else:
             self.status_msg = "Recording failed (Empty)"

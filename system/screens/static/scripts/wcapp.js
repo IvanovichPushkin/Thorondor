@@ -149,8 +149,22 @@ function doLogRec(action) {
         logStatus.style.animation = "blinker 1s linear infinite";
       } else {
         logStatus.style.display = "none";
+        pollLogSaved();
       }
     });
+}
+
+function pollLogSaved() {
+  const interval = setInterval(() => {
+    fetch("/log_record_status")
+      .then((r) => r.json())
+      .then((s) => {
+        if (s.saved) {
+          clearInterval(interval);
+          alert("Log Saved: " + s.file);
+        }
+      });
+  }, 500);
 }
 
 function initLogStream() {

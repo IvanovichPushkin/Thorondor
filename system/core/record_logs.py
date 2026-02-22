@@ -14,7 +14,9 @@ from core.config import LOG_FILE
 class LogRecorder:
     def __init__(self, max_queue=1000):
         self.recording = False
-        self.output_dir = os.path.join(os.getcwd(), "logs")  # ← relative to project
+        self.finalizing = False
+        self.saved = False
+        self.output_dir = os.path.join(os.getcwd(), "logs")
         os.makedirs(self.output_dir, exist_ok=True)
         self.filename = None
         self.log_queue = queue.Queue(maxsize=max_queue)
@@ -41,6 +43,8 @@ class LogRecorder:
         if self.recording:
             return
         self.recording = True
+        self.finalizing = False
+        self.saved = False
         os.makedirs(self.output_dir, exist_ok=True)
         with self.log_queue.mutex:
             self.log_queue.queue.clear()
@@ -81,6 +85,8 @@ class LogRecorder:
             self.log_entries.append(log_entry)
 
         self._generate_pdf(start_time)
+        self.saved = True
+        self.finalizing = False
         print(f"[INFO] Log recording stopped and saved: {self.filename}")
 
     def _generate_pdf(self, start_time):
@@ -145,6 +151,7 @@ class LogRecorder:
         if not self.recording:
             return
         self.recording = False
+        self.finalizing = True
         print("[INFO] Stopping log recording...")
         if self.worker and self.worker.is_alive():
             self.worker.join(timeout=5)

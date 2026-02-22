@@ -38,8 +38,12 @@ def register_routes(app, recorder, log_recorder, generate_frames, frames,
     async def start_record(request: Request):
         if not getattr(recorder, "directory_set", False):
             return JSONResponse({"status": "error", "message": "Please set directory first"}, status_code=400)
-        cam_name = request.query_params.get("cam_name", list(CAMERA_SOURCES.keys())[0])
-        recorder.start(cam_name=cam_name)
+        # Record all cameras simultaneously; pass ?cam_name=X to record just one
+        cam_name = request.query_params.get("cam_name", None)
+        if cam_name:
+            recorder.start(cam_name=cam_name)
+        else:
+            recorder.start(cam_names=list(CAMERA_SOURCES.keys()))
         return JSONResponse({"status": "Started"})
 
     @app.get("/stop_record")
