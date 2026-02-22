@@ -11,7 +11,6 @@ import asyncio
 import sys
 import threading
 import time
-import atexit
 from contextlib import asynccontextmanager
 
 if sys.platform == "win32":
@@ -20,8 +19,8 @@ if sys.platform == "win32":
 import cv2
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse, Response
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -30,18 +29,11 @@ from core.cameras import frames
 from core.config import FRAME_HEIGHT, FRAME_WIDTH, LOG_FILE, CSV_FILE, CAMERA_SOURCES
 from core.recorders import init_recorders
 from core.routes import register_routes
-import core.vision as _vision
 
-# ─────────────────────────────────────────────
-# Global state
-# ─────────────────────────────────────────────
 recorder     = None
 log_recorder = None
 
 
-# ─────────────────────────────────────────────
-# AI processing loop (one per camera)
-# ─────────────────────────────────────────────
 def ai_processing_loop(cam_name):
     gen = generate_frames(cam_name, frames_override=frames, recorder=recorder)
     while True:
@@ -54,33 +46,42 @@ def ai_processing_loop(cam_name):
             time.sleep(1)
 
 
-# ─────────────────────────────────────────────
-# MJPEG frame generator
-# ─────────────────────────────────────────────
+# Lower quality = faster encode = higher delivered FPS over MJPEG.
+# 65 is visually fine for surveillance; raise to 75 if it looks too blocky.
+MJPEG_JPEG_QUALITY = 65
+
 def mjpeg_generator(cam_name):
-    """Yield annotated frames as a multipart MJPEG stream."""
-    last_id = None
-    blank   = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+    last_id     = None
+    blank       = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
     cv2.putText(blank, f"Connecting to {cam_name}...",
                 (50, FRAME_HEIGHT // 2), cv2.FONT_HERSHEY_SIMPLEX,
                 1.0, (255, 255, 255), 2)
-    _, blank_jpg = cv2.imencode(".jpg", blank, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    _, blank_jpg = cv2.imencode(".jpg", blank, [cv2.IMWRITE_JPEG_QUALITY, MJPEG_JPEG_QUALITY])
     blank_bytes  = blank_jpg.tobytes()
 
     while True:
         frame = latest_annotated.get(cam_name)
 
         if frame is None:
-            payload = blank_bytes
-        else:
-            fid = id(frame)
-            if fid == last_id:
-                # No new frame yet — yield nothing and sleep briefly
-                time.sleep(0.005)
-                continue
-            last_id = fid
-            ok, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            payload  = jpg.tobytes() if ok else blank_bytes
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" +
+                blank_bytes +
+                b"\r\n"
+            )
+            time.sleep(0.033)
+            continue
+
+        fid = id(frame)
+        if fid == last_id:
+            # No new frame yet — yield nothing, spin tight so we send
+            # the next frame the instant the AI pipeline produces it.
+            time.sleep(0.001)
+            continue
+
+        last_id = fid
+        ok, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, MJPEG_JPEG_QUALITY])
+        payload  = jpg.tobytes() if ok else blank_bytes
 
         yield (
             b"--frame\r\n"
@@ -90,16 +91,12 @@ def mjpeg_generator(cam_name):
         )
 
 
-# ─────────────────────────────────────────────
-# Lifespan
-# ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global recorder, log_recorder
 
-    # Detect FPS from first RTSP camera
     first_cam_url = list(CAMERA_SOURCES.values())[0]
-    cap_init = cv2.VideoCapture(first_cam_url)
+    cap_init  = cv2.VideoCapture(first_cam_url)
     actual_fps = cap_init.get(cv2.CAP_PROP_FPS)
     if actual_fps <= 0 or actual_fps > 120:
         actual_fps = 15.0
@@ -108,7 +105,6 @@ async def lifespan(app: FastAPI):
 
     recorder, log_recorder = init_recorders(fps=actual_fps)
 
-    # Pre-warm AI workers for all cameras in parallel
     print("[INFO] Pre-warming AI workers for all cameras...")
     warm_events = []
     for cam_name in CAMERA_SOURCES:
@@ -131,28 +127,29 @@ async def lifespan(app: FastAPI):
         ev.wait(timeout=10)
     print("[INFO] AI workers warmed up — starting camera loops")
 
-    # Start AI loop per camera
     for cam_name in CAMERA_SOURCES:
         threading.Thread(
             target=ai_processing_loop, args=(cam_name,), daemon=True
         ).start()
 
-    # Register routes
     register_routes(app, recorder, log_recorder, generate_frames, frames,
                     CAMERA_SOURCES, None, LOG_FILE, follow,
                     templates=templates, template_name="app.html")
 
-    # MJPEG video feed routes
     @app.get("/video_feed/{cam_name}")
     async def video_feed(cam_name: str):
         return StreamingResponse(
             mjpeg_generator(cam_name),
-            media_type="multipart/x-mixed-replace; boundary=frame"
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control":     "no-store, no-cache, must-revalidate",
+                "Pragma":            "no-cache",
+                "X-Accel-Buffering": "no",
+            }
         )
 
     yield
 
-    # Cleanup on shutdown
     try:
         with open(LOG_FILE, "w") as f: f.truncate(0)
         with open(CSV_FILE, "w") as f: f.truncate(0)
@@ -160,17 +157,11 @@ async def lifespan(app: FastAPI):
         pass
 
 
-# ─────────────────────────────────────────────
-# App
-# ─────────────────────────────────────────────
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="screens/static"), name="static")
 templates = Jinja2Templates(directory="screens")
 
 
-# ─────────────────────────────────────────────
-# Log streaming
-# ─────────────────────────────────────────────
 def follow(logfile):
     logfile.seek(0, 2)
     while True:
