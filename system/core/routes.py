@@ -35,10 +35,11 @@ def register_routes(app, recorder, log_recorder, generate_frames, frames,
         return JSONResponse({"status": "cancelled"})
 
     @app.get("/start_record")
-    async def start_record():
+    async def start_record(request: Request):
         if not getattr(recorder, "directory_set", False):
             return JSONResponse({"status": "error", "message": "Please set directory first"}, status_code=400)
-        recorder.start(cam_name="cam1")
+        cam_name = request.query_params.get("cam_name", list(CAMERA_SOURCES.keys())[0])
+        recorder.start(cam_name=cam_name)
         return JSONResponse({"status": "Started"})
 
     @app.get("/stop_record")

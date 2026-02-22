@@ -18,6 +18,7 @@ body {
 }
 
 /* ---------------- VIDEO PANEL ---------------- */
+
 .video {
   flex: 2;
   padding: 20px;
@@ -44,6 +45,7 @@ video {
 }
 
 /* ---------------- LOG PANEL ---------------- */
+
 .log {
   flex: 1;
   padding: 20px;
@@ -55,11 +57,13 @@ video {
   box-sizing: border-box;
 }
 
+/* Keep title fixed */
 .log h2 {
   margin: 0 0 10px 0;
   flex-shrink: 0;
 }
 
+/* Only this area scrolls */
 #log {
   flex: 1;
   overflow-y: auto;
@@ -72,6 +76,13 @@ video {
 }
 
 /* ---------------- CAMERA BUTTONS ---------------- */
+.camera-buttons {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
 .cam-btn {
   background: linear-gradient(135deg, #3b82f6, #2563eb);
   color: white;
@@ -96,6 +107,7 @@ video {
 }
 
 /* ---------------- OVERLAY CONTROLS ---------------- */
+
 .overlay {
   position: absolute;
   top: 25px;
@@ -114,6 +126,7 @@ video {
 }
 
 /* ---------------- BUTTONS ---------------- */
+
 .btn {
   cursor: pointer;
   border: none;
@@ -131,6 +144,7 @@ video {
 }
 
 /* Record Buttons */
+
 .rec-btn {
   background: linear-gradient(135deg, #ef4444, #dc2626);
   color: white;
@@ -170,11 +184,20 @@ video {
 }
 
 /* ---------------- STATUS INDICATORS ---------------- */
+
 #status {
   color: #ef4444;
   font-weight: bold;
   display: none;
   margin-right: 10px;
+  animation: blinker 1s linear infinite;
+}
+
+#logStatus {
+  color: #ef4444;
+  font-weight: bold;
+  display: none;
+  margin-left: 8px;
   animation: blinker 1s linear infinite;
 }
 
@@ -191,6 +214,7 @@ video {
 }
 
 /* ---------------- PROGRESS BAR ---------------- */
+
 #progress {
   width: 100%;
   background: #e5e7eb;
@@ -219,6 +243,7 @@ video {
 }
 
 /* ---------------- SAVE WARNING ---------------- */
+
 #saveWarning {
   background: linear-gradient(135deg, #f59e0b, #d97706);
   color: white;

@@ -52,15 +52,15 @@ class VideoRecorder:
         # Clamp: never exceed hardware fps, never go below 1
         return max(1.0, min(measured, self.fps))
 
-    def _spawn_ffmpeg(self, output_path):
+    def _spawn_ffmpeg(self, output_path, width, height):
         """Spawn one FFmpeg process that reads rawvideo from stdin."""
         cmd = [
             self.ffmpeg_exe, "-y",
             "-f",        "rawvideo",
             "-vcodec",   "rawvideo",
             "-pix_fmt",  "bgr24",
-            "-s",        f"{FRAME_WIDTH}x{FRAME_HEIGHT}",
-            "-r",        str(self.fps),      # input rate; actual rate controlled by feed thread
+            "-s",        f"{width}x{height}",   # actual frame size, not config assumption
+            "-r",        str(self.fps),
             "-i",        "pipe:0",
             "-c:v",      "libx264",
             "-preset",   "ultrafast",
@@ -95,8 +95,27 @@ class VideoRecorder:
         self.current_file_raw = os.path.join(self.output_dir, f"Argus_Record_{ts}_raw.mp4")
 
         try:
-            self._proc_annotated = self._spawn_ffmpeg(self.current_file)
-            self._proc_raw       = self._spawn_ffmpeg(self.current_file_raw)
+            # Detect actual frame dimensions from the live feed.
+            # Wait up to 3s in case the pipeline hasn't produced a frame yet.
+            from core.vision import latest_annotated, latest_raw
+            actual_frame = None
+            for _ in range(30):
+                _ann = latest_annotated.get(cam_name)
+                _raw = latest_raw.get(cam_name)
+                actual_frame = _ann if _ann is not None else _raw
+                if actual_frame is not None:
+                    break
+                time.sleep(0.1)
+
+            if actual_frame is not None:
+                h, w = actual_frame.shape[:2]
+            else:
+                w, h = FRAME_WIDTH, FRAME_HEIGHT
+                print(f"[WARN] No frame available for {cam_name} — falling back to config size {w}x{h}")
+            print(f"[INFO] Recorder using frame size: {w}x{h} for {cam_name}")
+
+            self._proc_annotated = self._spawn_ffmpeg(self.current_file,     w, h)
+            self._proc_raw       = self._spawn_ffmpeg(self.current_file_raw, w, h)
 
             time.sleep(0.5)
             if self._proc_annotated.poll() is not None or self._proc_raw.poll() is not None:
@@ -111,18 +130,19 @@ class VideoRecorder:
             self._feed_thread.start()
 
         except Exception as e:
+            import traceback
+            print(f"[ERROR] Recorder failed to start: {e}")
+            traceback.print_exc()
             self.status_msg = f"Error: {e}"
 
     def _feed_frames(self):
-        """Push annotated + raw frames into their respective ffmpeg processes.
-        Frame rate is throttled to match actual pipeline output so the saved
-        video plays back at the same speed as what you see on the webcam.
-        """
+        """Push annotated + raw frames into their respective ffmpeg processes."""
         from core.vision import latest_annotated, latest_raw
 
         last_annotated_id = None
         last_raw_id       = None
-        interval          = 1.0 / self.fps   # initial interval, updates dynamically
+        interval          = 1.0 / self.fps
+        frames_written    = 0
 
         while self.recording:
             t_start = time.perf_counter()
@@ -130,32 +150,33 @@ class VideoRecorder:
             annotated = latest_annotated.get(self._cam_name)
             raw       = latest_raw.get(self._cam_name)
 
-            wrote = False
-
             if annotated is not None and id(annotated) != last_annotated_id:
                 last_annotated_id = id(annotated)
                 try:
                     self._proc_annotated.stdin.write(annotated.tobytes())
-                except Exception:
+                    self._fps_window.append(t_start)
+                    interval = 1.0 / self._measured_fps()
+                    frames_written += 1
+                    if frames_written == 1:
+                        print(f"[INFO] Recorder writing frames: shape={annotated.shape}")
+                except Exception as e:
+                    print(f"[ERROR] Recorder annotated write failed: {e}")
                     break
-
-                # Track real frame timestamps for FPS measurement
-                self._fps_window.append(t_start)
-                interval = 1.0 / self._measured_fps()
-                wrote = True
 
             if raw is not None and id(raw) != last_raw_id:
                 last_raw_id = id(raw)
                 try:
                     self._proc_raw.stdin.write(raw.tobytes())
-                except Exception:
+                except Exception as e:
+                    print(f"[ERROR] Recorder raw write failed: {e}")
                     break
-                wrote = True
 
             elapsed = time.perf_counter() - t_start
             sleep_t = interval - elapsed
             if sleep_t > 0:
                 time.sleep(sleep_t)
+
+        print(f"[INFO] Recorder _feed_frames exited. Total frames written: {frames_written}")
 
     def stop(self):
         if not self.recording:
@@ -189,10 +210,15 @@ class VideoRecorder:
         saved = []
         for path in (self.current_file, self.current_file_raw):
             if path and os.path.exists(path):
-                if os.path.getsize(path) < 5000:
+                size = os.path.getsize(path)
+                print(f"[INFO] Recorder file: {os.path.basename(path)} | size: {size} bytes")
+                if size < 5000:
+                    print(f"[WARN] Recorder deleting empty file: {os.path.basename(path)}")
                     os.remove(path)
                 else:
                     saved.append(os.path.basename(path))
+            else:
+                print(f"[WARN] Recorder file not found: {path}")
 
         if saved:
             self.status_msg = "Saved: " + ", ".join(saved)
