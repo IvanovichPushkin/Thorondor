@@ -11,12 +11,6 @@
         <h2>
           Live Multi-Camera
           <span id="status">REC</span>
-          <span
-            id="webrtcStatus"
-            style="font-size: 0.6em; color: #666; margin-left: 10px"
-          >
-            connecting...
-          </span>
         </h2>
 
         <div class="camera-buttons">
@@ -55,13 +49,11 @@
         <div id="progressText">0%</div>
         <div id="saveWarning">SAVING VIDEO - DO NOT CLOSE APP</div>
 
-        <video
+        <img
           id="videoStream"
-          autoplay
-          playsinline
-          muted
-          style="width: 100%; height: auto"
-        ></video>
+          src=""
+          style="width: 100%; height: auto; display: block"
+        />
       </div>
 
       <div class="log">

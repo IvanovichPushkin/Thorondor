@@ -1,108 +1,27 @@
-let currentCam = document.body.dataset.defaultCam || "cam1";
-let pc = null;
+let currentCam = document.body.dataset.defaultCam || "Camera 1";
 let progressInterval = null;
 
-// --- WebRTC ---
-async function startWebRTC(camName) {
-  if (pc) {
-    pc.close();
-    pc = null;
-  }
-
-  const statusEl = document.getElementById("webrtcStatus");
-  const videoEl = document.getElementById("videoStream");
-
-  statusEl.style.fontSize = "0.6em";
-  statusEl.style.color = "#666";
-  statusEl.style.marginLeft = "10px";
-  statusEl.textContent = "connecting...";
-
-  pc = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  });
-
-  pc.addTransceiver("video", { direction: "recvonly" });
-
-  pc.ontrack = function (evt) {
-    if (evt.streams && evt.streams[0]) {
-      videoEl.srcObject = evt.streams[0];
-      statusEl.textContent = "WebRTC Active";
-    }
-  };
-
-  pc.oniceconnectionstatechange = function () {
-    const state = pc.iceConnectionState;
-    if (state === "failed" || state === "disconnected") {
-      statusEl.textContent = "WebRTC Failed — retrying...";
-      setTimeout(() => startWebRTC(camName), 3000);
-    }
-  };
-
-  try {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    const resp = await fetch("/offer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        cam_name: camName,
-        sdp: pc.localDescription.sdp,
-        type: pc.localDescription.type,
-      }),
-    });
-
-    if (!resp.ok) throw new Error("Offer rejected");
-
-    const answer = await resp.json();
-    await pc.setRemoteDescription(new RTCSessionDescription(answer));
-  } catch (err) {
-    console.error("WebRTC Error:", err);
-    statusEl.textContent = "WebRTC Error — retrying...";
-    setTimeout(() => startWebRTC(camName), 3000);
-  }
+// ─── MJPEG stream ───────────────────────────────────────────────────────────
+function startStream(camName) {
+  const img = document.getElementById("videoStream");
+  // Append timestamp to bust any browser cache
+  img.src = "/video_feed/" + encodeURIComponent(camName) + "?t=" + Date.now();
 }
 
 function switchCam(camName) {
   currentCam = camName;
-  startWebRTC(camName);
-
+  startStream(camName);
   document.querySelectorAll(".cam-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.textContent.trim() === camName);
   });
 }
 
-window.addEventListener("load", () => startWebRTC(currentCam));
-
-// --- Recording ---
-
-// function saveDir() {
-//   fetch("/set_dir", { method: "POST" })
-//     .then((r) => r.json())
-//     .then((data) => {
-//       if (data.path) {
-//         alert("Saving videos to: " + data.path);
-//         document.getElementById("startB").disabled = false;
-//       }
-//     });
-// }
-
-// function saveLogDir() {
-//   fetch("/set_log_dir", { method: "POST" })
-//     .then((r) => r.json())
-//     .then((data) => {
-//       if (data.path) {
-//         alert("Saving logs to: " + data.path);
-//         document.getElementById("startLogB").disabled = false;
-//       }
-//     });
-// }
-
+// ─── Recording ───────────────────────────────────────────────────────────────
 function doRec(action) {
   let isStart = action === "start";
   fetch("/" + action + "_record")
-    .then((response) => response.json())
-    .then((data) => {
+    .then((r) => r.json())
+    .then(() => {
       document.getElementById("startB").style.display = isStart
         ? "none"
         : "block";
@@ -112,7 +31,6 @@ function doRec(action) {
       document.getElementById("status").style.display = isStart
         ? "inline"
         : "none";
-
       if (!isStart) handleProgress();
       else if (progressInterval) {
         clearInterval(progressInterval);
@@ -121,40 +39,9 @@ function doRec(action) {
     });
 }
 
-// function doRec(action) {
-//   let isStart = action === "start";
-//   fetch("/" + action + "_record")
-//     .then((response) => {
-//       if (!response.ok) {
-//         alert("Please click SET VIDEO DIR first!");
-//         return;
-//       }
-//       return response.json();
-//     })
-//     .then((data) => {
-//       if (!data) return;
-//       document.getElementById("startB").style.display = isStart
-//         ? "none"
-//         : "block";
-//       document.getElementById("stopB").style.display = isStart
-//         ? "block"
-//         : "none";
-//       document.getElementById("status").style.display = isStart
-//         ? "inline"
-//         : "none";
-
-//       if (!isStart) handleProgress();
-//       else if (progressInterval) {
-//         clearInterval(progressInterval);
-//         toggleProgressUI(false);
-//       }
-//     });
-// }
-
 function handleProgress() {
   const inner = document.getElementById("progressBar");
   const text = document.getElementById("progressText");
-
   document.getElementById("startB").disabled = true;
   toggleProgressUI(true);
   inner.style.width = "0%";
@@ -170,23 +57,25 @@ function handleProgress() {
           clearInterval(progressInterval);
           toggleProgressUI(false);
           document.getElementById("startB").disabled = false;
-          alert("Video Saved");
+          alert("Videos Saved!");
         }
       });
   }, 500);
 }
 
 function toggleProgressUI(show) {
-  const display = show ? "block" : "none";
-  document.getElementById("progress").style.display = display;
-  document.getElementById("progressText").style.display = display;
-  document.getElementById("saveWarning").style.display = display;
+  const d = show ? "block" : "none";
+  document.getElementById("progress").style.display = d;
+  document.getElementById("progressText").style.display = d;
+  document.getElementById("saveWarning").style.display = d;
 }
+
+// ─── Log recording ───────────────────────────────────────────────────────────
 function doLogRec(action) {
   let isStart = action === "start";
   fetch("/" + action + "_log_record")
-    .then((response) => response.json())
-    .then((data) => {
+    .then((r) => r.json())
+    .then(() => {
       document.getElementById("startLogB").style.display = isStart
         ? "none"
         : "block";
@@ -219,58 +108,62 @@ function pollLogSaved() {
   }, 500);
 }
 
-// function doLogRec(action) {
-//   let isStart = action === "start";
-//   fetch("/" + action + "_log_record")
-//     .then((response) => {
-//       if (!response.ok) {
-//         alert("Please click SET LOG DIR first!");
-//         return;
-//       }
-//       return response.json();
-//     })
-//     .then((data) => {
-//       if (!data) return;
-//       document.getElementById("startLogB").style.display = isStart
-//         ? "none"
-//         : "block";
-//       document.getElementById("stopLogB").style.display = isStart
-//         ? "block"
-//         : "none";
-//       alert(isStart ? "Log recording started!" : "Log saved!");
-//     });
-// }
-
-// --- Live Log Stream ---
+// ─── Live log stream ─────────────────────────────────────────────────────────
 function initLogStream() {
   const logDiv = document.getElementById("log");
+  const MAX_LINES = 200;
   const evtSource = new EventSource("/log_stream");
 
-  evtSource.onmessage = function (e) {
-    const line = document.createElement("div");
-    line.textContent = e.data;
+  let pending = [];
+  let rafId = null;
 
-    if (e.data.includes("Cheating")) {
-      line.style.color = "#dc2626";
-      line.style.fontWeight = "600";
-    } else if (e.data.includes("Normal")) {
-      line.style.color = "#16a34a";
-    } else if (e.data.includes("Object")) {
-      line.style.color = "#2563eb";
+  function flushPending() {
+    rafId = null;
+    if (!pending.length) return;
+    const frag = document.createDocumentFragment();
+    for (const { text, color, bold } of pending) {
+      const line = document.createElement("div");
+      line.textContent = text;
+      if (color) line.style.color = color;
+      if (bold) line.style.fontWeight = "600";
+      frag.appendChild(line);
     }
+    pending = [];
+    logDiv.appendChild(frag);
+    while (logDiv.children.length > MAX_LINES)
+      logDiv.removeChild(logDiv.firstChild);
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
 
-    logDiv.appendChild(line);
-    logDiv.scrollTo({ top: logDiv.scrollHeight, behavior: "smooth" });
+  evtSource.onmessage = function (e) {
+    const text = e.data;
+    let color = null,
+      bold = false;
+    if (text.includes("Cheating")) {
+      color = "#dc2626";
+      bold = true;
+    } else if (text.includes("Normal")) {
+      color = "#16a34a";
+    } else if (text.includes("Object")) {
+      color = "#f97316";
+    } else if (text.includes("Desk")) {
+      color = "#2563eb";
+    }
+    pending.push({ text, color, bold });
+    if (!rafId) rafId = requestAnimationFrame(flushPending);
   };
 }
 
+// ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   initLogStream();
-  startWebRTC();
+  startStream(currentCam);
 
-  // enable buttons immediately since we use hardcoded dirs
-  const startVideoBtn = document.getElementById("startB");
-  const startLogBtn = document.getElementById("startLogB");
-  if (startVideoBtn) startVideoBtn.disabled = false;
-  if (startLogBtn) startLogBtn.disabled = false;
+  // Highlight default cam button
+  document.querySelectorAll(".cam-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.textContent.trim() === currentCam);
+  });
+
+  document.getElementById("startB").disabled = false;
+  document.getElementById("startLogB").disabled = false;
 });

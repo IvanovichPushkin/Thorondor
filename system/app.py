@@ -1,3 +1,12 @@
+import os
+# ── CRITICAL: Set BEFORE any numpy/cv2/onnxruntime imports ───────────────────
+os.environ.setdefault("OMP_NUM_THREADS",      "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS",      "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS",  "1")
+os.environ.setdefault("OMP_WAIT_POLICY",      "PASSIVE")
+# ─────────────────────────────────────────────────────────────────────────────
+
 import asyncio
 import sys
 import threading
@@ -5,7 +14,6 @@ import time
 import atexit
 from contextlib import asynccontextmanager
 
-# CRITICAL: Must be set before importing aiortc on Windows
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -13,31 +21,32 @@ import cv2
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
-from av import VideoFrame
 
 from core.vision import generate_frames, latest_annotated
 from core.cameras import frames
 from core.config import FRAME_HEIGHT, FRAME_WIDTH, LOG_FILE, CSV_FILE, CAMERA_SOURCES
 from core.recorders import init_recorders
 from core.routes import register_routes
+import core.vision as _vision
 
 # ─────────────────────────────────────────────
-# Global state — populated inside lifespan only
+# Global state
 # ─────────────────────────────────────────────
 recorder     = None
 log_recorder = None
 
 
+# ─────────────────────────────────────────────
+# AI processing loop (one per camera)
+# ─────────────────────────────────────────────
 def ai_processing_loop(cam_name):
     gen = generate_frames(cam_name, frames_override=frames, recorder=recorder)
     while True:
         try:
             next(gen)
-            time.sleep(0.001)
         except StopIteration:
             break
         except Exception as e:
@@ -46,8 +55,43 @@ def ai_processing_loop(cam_name):
 
 
 # ─────────────────────────────────────────────
-# Lifespan — recorder init + AI loops live here
-# so they only run once in the real server process
+# MJPEG frame generator
+# ─────────────────────────────────────────────
+def mjpeg_generator(cam_name):
+    """Yield annotated frames as a multipart MJPEG stream."""
+    last_id = None
+    blank   = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+    cv2.putText(blank, f"Connecting to {cam_name}...",
+                (50, FRAME_HEIGHT // 2), cv2.FONT_HERSHEY_SIMPLEX,
+                1.0, (255, 255, 255), 2)
+    _, blank_jpg = cv2.imencode(".jpg", blank, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    blank_bytes  = blank_jpg.tobytes()
+
+    while True:
+        frame = latest_annotated.get(cam_name)
+
+        if frame is None:
+            payload = blank_bytes
+        else:
+            fid = id(frame)
+            if fid == last_id:
+                # No new frame yet — yield nothing and sleep briefly
+                time.sleep(0.005)
+                continue
+            last_id = fid
+            ok, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            payload  = jpg.tobytes() if ok else blank_bytes
+
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" +
+            payload +
+            b"\r\n"
+        )
+
+
+# ─────────────────────────────────────────────
+# Lifespan
 # ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -58,12 +102,34 @@ async def lifespan(app: FastAPI):
     cap_init = cv2.VideoCapture(first_cam_url)
     actual_fps = cap_init.get(cv2.CAP_PROP_FPS)
     if actual_fps <= 0 or actual_fps > 120:
-        actual_fps = 15.0  # Tapo default fallback
+        actual_fps = 15.0
     cap_init.release()
     print(f"[INFO] Detected Stream FPS: {actual_fps}. Syncing recorders...")
 
-    # Init recorders
     recorder, log_recorder = init_recorders(fps=actual_fps)
+
+    # Pre-warm AI workers for all cameras in parallel
+    print("[INFO] Pre-warming AI workers for all cameras...")
+    warm_events = []
+    for cam_name in CAMERA_SOURCES:
+        ev = threading.Event()
+        warm_events.append(ev)
+        def _warm(cn=cam_name, done=ev):
+            dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+            try:
+                from core.detections.pose   import predict as pp
+                from core.detections.object import predict as op
+                from core.detections.desk   import predict as dp
+                pp(dummy, cn); op(dummy, cn); dp(dummy, cn)
+            except Exception as e:
+                print(f"[WARN] Warmup failed for {cn}: {e}")
+            finally:
+                done.set()
+        threading.Thread(target=_warm, daemon=True).start()
+
+    for ev in warm_events:
+        ev.wait(timeout=10)
+    print("[INFO] AI workers warmed up — starting camera loops")
 
     # Start AI loop per camera
     for cam_name in CAMERA_SOURCES:
@@ -71,12 +137,20 @@ async def lifespan(app: FastAPI):
             target=ai_processing_loop, args=(cam_name,), daemon=True
         ).start()
 
-    # Register routes now that recorder is ready
+    # Register routes
     register_routes(app, recorder, log_recorder, generate_frames, frames,
-                    CAMERA_SOURCES, handle_offer, LOG_FILE, follow,
+                    CAMERA_SOURCES, None, LOG_FILE, follow,
                     templates=templates, template_name="app.html")
 
-    yield  # ← server is running
+    # MJPEG video feed routes
+    @app.get("/video_feed/{cam_name}")
+    async def video_feed(cam_name: str):
+        return StreamingResponse(
+            mjpeg_generator(cam_name),
+            media_type="multipart/x-mixed-replace; boundary=frame"
+        )
+
+    yield
 
     # Cleanup on shutdown
     try:
@@ -95,57 +169,7 @@ templates = Jinja2Templates(directory="screens")
 
 
 # ─────────────────────────────────────────────
-# WebRTC Track
-# ─────────────────────────────────────────────
-class ArgusVideoTrack(VideoStreamTrack):
-    kind = "video"
-
-    def __init__(self, cam_name):
-        super().__init__()
-        self.cam_name = cam_name
-
-    async def recv(self):
-        pts, time_base = await self.next_timestamp()
-
-        frame = None
-        for _ in range(10):
-            frame = latest_annotated.get(self.cam_name)
-            if frame is not None:
-                break
-            await asyncio.sleep(0.02)
-
-        if frame is None:
-            frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
-            cv2.putText(frame, f"Connecting to {self.cam_name}...", (50, FRAME_HEIGHT // 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-
-        frame_rgb = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2RGB)
-        video_frame = VideoFrame.from_ndarray(frame_rgb, format="rgb24")
-        video_frame.pts = pts
-        video_frame.time_base = time_base
-        return video_frame
-
-
-# ─────────────────────────────────────────────
-# WebRTC Offer Handler
-# ─────────────────────────────────────────────
-async def handle_offer(cam_name, sdp, type_):
-    pc = RTCPeerConnection()
-
-    @pc.on("connectionstatechange")
-    async def on_state():
-        if pc.connectionState in ("failed", "closed"):
-            await pc.close()
-
-    pc.addTrack(ArgusVideoTrack(cam_name))
-    await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
-    return pc.localDescription
-
-
-# ─────────────────────────────────────────────
-# Log Streaming
+# Log streaming
 # ─────────────────────────────────────────────
 def follow(logfile):
     logfile.seek(0, 2)
@@ -159,15 +183,11 @@ def follow(logfile):
         yield f"data: {line}\n\n"
 
 
-# ─────────────────────────────────────────────
-# Entry point — always use uvicorn directly,
-# NEVER "fastapi dev" for camera apps
-# ─────────────────────────────────────────────
 if __name__ == "__main__":
     uvicorn.run(
         "app:app",
         host="0.0.0.0",
         port=5000,
         log_level="warning",
-        reload=False        # reload=False is critical — reloader breaks camera lock
+        reload=False
     )

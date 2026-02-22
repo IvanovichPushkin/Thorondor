@@ -3,7 +3,7 @@ import csv
 import threading
 from datetime import datetime
 
-from core.yolo_models import yolo
+from core.yolo_models import yolo, DEVICE
 from core.config import (
     YOLO_CONF_THRESHOLD,
     LOG_FILE,
@@ -21,6 +21,10 @@ OBJECT_TEXT_COLOR = (0, 140, 255)
 _LABEL_TO_CLS     = {v: k for k, v in OBJECT_LABELS.items()}
 
 IOU_THRESHOLD = 0.3
+
+# Inference resolution — 16:9 slice of imgsz=320.
+_INFER_W = 320
+_INFER_H = 180
 
 _last_object_state = {}
 _next_instance_id  = 0
@@ -68,7 +72,7 @@ def _iou(boxA, boxB):
     return interArea / float(areaA + areaB - interArea)
 
 def _match_instances(prev_instances, current_detections):
-    used_prev        = set()
+    used_prev         = set()
     matched_instances = {}
     unmatched_current = []
     for label, box, conf in current_detections:
@@ -90,17 +94,34 @@ def _match_instances(prev_instances, current_detections):
 
 
 def predict(frame, cam_name):
-    """Run YOLO inference + instance tracking. Returns matched instances dict.
-    Does NOT draw — call draw() separately for cache+redraw pattern.
+    """Run YOLO inference on downscaled frame, scale coords back to full-res.
+    Returns matched instances dict. Does NOT draw.
     """
-    results = yolo.predict(frame, imgsz=320, conf=YOLO_CONF_THRESHOLD, verbose=False)
+    orig_h, orig_w = frame.shape[:2]
+
+    # ── Pre-resize to inference resolution ──
+    small   = cv2.resize(frame, (_INFER_W, _INFER_H), interpolation=cv2.INTER_LINEAR)
+    scale_x = orig_w / _INFER_W
+    scale_y = orig_h / _INFER_H
+
+    results = yolo.predict(
+        small,
+        imgsz=320,
+        conf=YOLO_CONF_THRESHOLD,
+        verbose=False,
+        device=DEVICE if DEVICE != "directml" else "cpu",
+    )
+
     current_detections = []
     for r in results:
         for box in r.boxes:
-            cls             = int(box.cls[0].item())
-            conf_val        = float(box.conf[0].item())
-            label           = _get_label(cls)
-            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+            cls      = int(box.cls[0].item())
+            conf_val = float(box.conf[0].item())
+            label    = _get_label(cls)
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            # Scale back to original resolution
+            x1 = int(x1 * scale_x); y1 = int(y1 * scale_y)
+            x2 = int(x2 * scale_x); y2 = int(y2 * scale_y)
             current_detections.append((label, (x1, y1, x2, y2), conf_val))
 
     prev_instances = _last_object_state.get(cam_name, {})

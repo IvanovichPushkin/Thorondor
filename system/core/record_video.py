@@ -132,11 +132,14 @@ class VideoRecorder:
                     continue
 
                 self._cameras[cn] = {
-                    "proc_ann":   proc_ann,
-                    "proc_raw":   proc_raw,
-                    "ann_path":   ann_path,
-                    "raw_path":   raw_path,
-                    "fps_window": deque(maxlen=30),
+                    "proc_ann":      proc_ann,
+                    "proc_raw":      proc_raw,
+                    "ann_path":      ann_path,
+                    "raw_path":      raw_path,
+                    "fps_window":    deque(maxlen=30),
+                    "frames_written": 0,
+                    "start_time":    None,
+                    "end_time":      None,
                 }
                 print(f"[INFO] Recorder [{cn}] ffmpeg started OK")
 
@@ -186,9 +189,12 @@ class VideoRecorder:
                     proc_ann.stdin.write(annotated.tobytes())
                     fps_window.append(t_start)
                     interval = 1.0 / self._measured_fps(fps_window)
-                    frames_written += 1
-                    if frames_written == 1:
+                    if frames_written == 0:
+                        cam["start_time"] = t_start
                         print(f"[INFO] Recorder [{cam_name}] first frame written: shape={annotated.shape}")
+                    frames_written += 1
+                    cam["frames_written"] = frames_written
+                    cam["end_time"] = t_start
                 except Exception as e:
                     print(f"[ERROR] Recorder [{cam_name}] annotated write failed: {e}")
                     break
@@ -238,6 +244,18 @@ class VideoRecorder:
         time.sleep(0.5)
         saved = []
         for cn, cam in self._cameras.items():
+            # Compute actual recorded FPS from tracked timestamps
+            frames_written = cam.get("frames_written", 0)
+            start_time     = cam.get("start_time")
+            end_time       = cam.get("end_time")
+            if frames_written > 1 and start_time and end_time:
+                elapsed = end_time - start_time
+                actual_fps = round(frames_written / elapsed, 3) if elapsed > 0 else self.fps
+                actual_fps = max(1.0, min(actual_fps, self.fps))
+            else:
+                actual_fps = self.fps
+            print(f"[INFO] Recorder [{cn}] actual FPS: {actual_fps:.2f} ({frames_written} frames)")
+
             for path in (cam["ann_path"], cam["raw_path"]):
                 if os.path.exists(path):
                     size = os.path.getsize(path)
@@ -246,6 +264,41 @@ class VideoRecorder:
                         print(f"[WARN] Recorder [{cn}] deleting empty file: {os.path.basename(path)}")
                         os.remove(path)
                     else:
+                        # Re-encode with correct FPS so playback matches actual recording rate.
+                        # -c copy only changes the container header; we need setpts to fix
+                        # the actual per-frame timestamps baked into the stream.
+                        fixed_path = path.replace(".mp4", "_fixed.mp4")
+                        try:
+                            si = None
+                            if platform.system() == "Windows":
+                                si = subprocess.STARTUPINFO()
+                                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                            result = subprocess.run(
+                                [
+                                    self.ffmpeg_exe, "-y",
+                                    "-i",      path,
+                                    "-vf",     f"setpts=N/{actual_fps}/TB",
+                                    "-r",      str(actual_fps),
+                                    "-c:v",    "libx264",
+                                    "-preset", "ultrafast",
+                                    "-pix_fmt","yuv420p",
+                                    fixed_path,
+                                ],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                startupinfo=si,
+                                timeout=120,
+                            )
+                            if result.returncode == 0 and os.path.exists(fixed_path) and os.path.getsize(fixed_path) > 5000:
+                                os.remove(path)
+                                os.rename(fixed_path, path)
+                                print(f"[INFO] Recorder [{cn}] re-encoded at {actual_fps:.2f} fps: {os.path.basename(path)}")
+                            else:
+                                if os.path.exists(fixed_path):
+                                    os.remove(fixed_path)
+                                print(f"[WARN] Recorder [{cn}] re-encode failed, keeping original: {os.path.basename(path)}")
+                        except Exception as e:
+                            print(f"[WARN] Recorder [{cn}] re-encode error: {e}")
                         saved.append(os.path.basename(path))
                 else:
                     print(f"[WARN] Recorder [{cn}] file missing: {path}")

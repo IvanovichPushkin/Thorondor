@@ -3,33 +3,35 @@ import csv
 import threading
 from datetime import datetime
 
-from core.yolo_desk_models import yolo_desk
+from core.yolo_desk_models import yolo_desk, DEVICE
 from core.config import (
     YOLO_DESK_CONF_THRESHOLD,
     LOG_FILE,
     CSV_FILE,
 )
 
-DESK_LABELS  = {0: "Desk"}
-DESK_COLOR   = (255, 0, 0)
-_SNAP_GRID   = 10
+DESK_LABELS   = {0: "Desk"}
+DESK_COLOR    = (255, 0, 0)
+_SNAP_GRID    = 10
 IOU_THRESHOLD = 0.3
+
+# Inference resolution — 16:9 slice of imgsz=320.
+_INFER_W = 320
+_INFER_H = 180
 
 _last_desk_state: dict[str, dict] = {}
 _next_instance_id = 0
 
 # ── Buffered file I/O ─────────────────────────────────────────────────────────
-# Old code: open(LOG_FILE, "a") on every detection event = a syscall per event.
-# New code: one persistent handle + explicit flush. Dramatically faster on Windows.
-_log_lock  = threading.Lock()
-_log_file  = None
-_csv_file  = None
+_log_lock   = threading.Lock()
+_log_file   = None
+_csv_file   = None
 _csv_writer = None
 
 def _init_io():
     global _log_file, _csv_file, _csv_writer
     if _log_file is None:
-        _log_file   = open(LOG_FILE, "a", buffering=1)   # line-buffered
+        _log_file   = open(LOG_FILE, "a", buffering=1)
         _csv_file   = open(CSV_FILE, "a", newline="", buffering=1)
         _csv_writer = csv.writer(_csv_file)
 
@@ -86,23 +88,40 @@ def _match_desks(prev_instances, current_boxes):
 
 
 def predict(frame, cam_name, person_boxes=None):
-    """Run YOLO desk inference + tracking. Returns matched instances dict.
-    Does NOT draw — call draw() separately for cache+redraw pattern.
+    """Run YOLO desk inference on downscaled frame, scale coords back to full-res.
+    Returns matched instances dict. Does NOT draw.
     """
     if person_boxes is None:
         person_boxes = []
 
+    orig_h, orig_w = frame.shape[:2]
+
+    # ── Pre-resize to inference resolution ──
+    small   = cv2.resize(frame, (_INFER_W, _INFER_H), interpolation=cv2.INTER_LINEAR)
+    scale_x = orig_w / _INFER_W
+    scale_y = orig_h / _INFER_H
+
     desk_results = yolo_desk.predict(
-        frame, imgsz=320, conf=YOLO_DESK_CONF_THRESHOLD, verbose=False
+        small,
+        imgsz=320,
+        conf=YOLO_DESK_CONF_THRESHOLD,
+        verbose=False,
+        device=DEVICE if DEVICE != "directml" else "cpu",
     )
+
     current_boxes = []
 
     for r in desk_results:
         for box in r.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-            box_area        = (x2 - x1) * (y2 - y1)
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            # Scale back to original resolution before filtering
+            x1 = int(x1 * scale_x); y1 = int(y1 * scale_y)
+            x2 = int(x2 * scale_x); y2 = int(y2 * scale_y)
+
+            box_area = (x2 - x1) * (y2 - y1)
             if box_area < 1000:
                 continue
+
             overlaps_person = False
             for px1, py1, px2, py2 in person_boxes:
                 ix1 = max(x1, px1); iy1 = max(y1, py1)
@@ -111,6 +130,7 @@ def predict(frame, cam_name, person_boxes=None):
                     if (ix2 - ix1) * (iy2 - iy1) / (box_area + 1e-6) > 0.6:
                         overlaps_person = True
                         break
+
             if not overlaps_person:
                 current_boxes.append(_snap_box((x1, y1, x2, y2)))
 

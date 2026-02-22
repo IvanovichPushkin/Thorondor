@@ -3,6 +3,7 @@ import asyncio
 from fastapi import Request
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 
+
 def register_routes(app, recorder, log_recorder, generate_frames, frames,
                     CAMERA_SOURCES, handle_offer, LOG_FILE, follow,
                     templates=None, template_name="app.html"):
@@ -15,30 +16,11 @@ def register_routes(app, recorder, log_recorder, generate_frames, frames,
             {"request": request, "cams": list(CAMERA_SOURCES.keys()), "default_cam": default_cam}
         )
 
-    @app.post("/offer")
-    async def offer(request: Request):
-        try:
-            data = await request.json()
-            cam_name = data.get("cam_name", list(CAMERA_SOURCES.keys())[0])
-            local_desc = await handle_offer(cam_name, data["sdp"], data["type"])
-            return JSONResponse({"sdp": local_desc.sdp, "type": local_desc.type})
-        except Exception as e:
-            print(f"[ERROR] /offer failed: {e}")
-            return JSONResponse({"error": str(e)}, status_code=500)
-
-    @app.post("/set_dir")
-    async def set_dir():
-        path = recorder.set_directory_popup()
-        if path:
-            recorder.directory_set = True
-            return JSONResponse({"status": "success", "path": path})
-        return JSONResponse({"status": "cancelled"})
-
+    # ── Recording ─────────────────────────────────────────────────────────────
     @app.get("/start_record")
     async def start_record(request: Request):
         if not getattr(recorder, "directory_set", False):
             return JSONResponse({"status": "error", "message": "Please set directory first"}, status_code=400)
-        # Record all cameras simultaneously; pass ?cam_name=X to record just one
         cam_name = request.query_params.get("cam_name", None)
         if cam_name:
             recorder.start(cam_name=cam_name)
@@ -69,13 +51,7 @@ def register_routes(app, recorder, log_recorder, generate_frames, frames,
             "path":      recorder.output_dir
         })
 
-    @app.post("/set_log_dir")
-    async def set_log_dir():
-        path = log_recorder.set_directory_popup()
-        if path:
-            return JSONResponse({"status": "success", "path": path})
-        return JSONResponse({"status": "cancelled"})
-
+    # ── Log Recording ─────────────────────────────────────────────────────────
     @app.get("/start_log_record")
     async def start_log_record():
         if not getattr(log_recorder, "directory_set", False):
@@ -88,6 +64,16 @@ def register_routes(app, recorder, log_recorder, generate_frames, frames,
         log_recorder.stop()
         return JSONResponse({"status": "Stop requested"})
 
+    @app.get("/log_record_status")
+    async def log_record_status():
+        return JSONResponse({
+            "recording":  log_recorder.recording,
+            "finalizing": log_recorder.finalizing,
+            "saved":      log_recorder.saved,
+            "file":       os.path.basename(log_recorder.filename) if log_recorder.filename else "None"
+        })
+
+    # ── Log Stream (SSE) ──────────────────────────────────────────────────────
     @app.get("/log_stream")
     async def log_stream():
         if not os.path.exists(LOG_FILE):

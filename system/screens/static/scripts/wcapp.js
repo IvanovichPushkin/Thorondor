@@ -1,87 +1,18 @@
-let pc = null;
 let progressInterval = null;
 
-// Initialize everything once the DOM is fully loaded
-document.addEventListener("DOMContentLoaded", () => {
-  initLogStream();
-  startWebRTC();
-
-  // enable buttons immediately since we use hardcoded dirs
-  const startVideoBtn = document.getElementById("startB");
-  const startLogBtn = document.getElementById("startLogB");
-  if (startVideoBtn) startVideoBtn.disabled = false;
-  if (startLogBtn) startLogBtn.disabled = false;
-});
-
-// --- WebRTC Logic ---
-async function startWebRTC() {
-  const statusEl = document.getElementById("webrtcStatus");
-  const videoEl = document.getElementById("videoStream");
-  // const fallbackEl = document.getElementById("fallbackStream");
-
-  pc = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  });
-
-  pc.addTransceiver("video", { direction: "recvonly" });
-
-  pc.ontrack = function (evt) {
-    if (evt.streams && evt.streams[0]) {
-      videoEl.srcObject = evt.streams[0];
-      videoEl.style.display = "block";
-      // fallbackEl.style.display = "none";
-      statusEl.textContent = "WebRTC Active";
-    }
-  };
-
-  pc.oniceconnectionstatechange = () => {
-    if (pc.iceConnectionState === "failed") {
-      statusEl.textContent = "WebRTC Failed - Using MJPEG";
-      videoEl.style.display = "none";
-      // fallbackEl.style.display = "block";
-    }
-  };
-
-  try {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    const resp = await fetch("/offer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        cam_name: "cam1",
-        sdp: pc.localDescription.sdp,
-        type: pc.localDescription.type,
-      }),
-    });
-
-    const answer = await resp.json();
-    await pc.setRemoteDescription(new RTCSessionDescription(answer));
-  } catch (e) {
-    console.error("WebRTC Error:", e);
-    statusEl.textContent = "WebRTC Error";
-  }
-}
-
-// --- Directory and Recording Logic ---
+// ─── Recording ───────────────────────────────────────────────────────────────
 function saveDir() {
-  // video folder is fixed at project recordings/
   alert("Videos will be saved to the project recordings folder.");
-  document.getElementById("startB").disabled = false;
 }
-
 function saveLogDir() {
-  // logs folder is fixed at project logs/
   alert("Logs will be saved to the project logs folder.");
-  document.getElementById("startLogB").disabled = false;
 }
 
 function doRec(action) {
   let isStart = action === "start";
   fetch("/" + action + "_record")
-    .then((response) => response.json())
-    .then((data) => {
+    .then((r) => r.json())
+    .then(() => {
       document.getElementById("startB").style.display = isStart
         ? "none"
         : "block";
@@ -91,7 +22,6 @@ function doRec(action) {
       document.getElementById("status").style.display = isStart
         ? "inline"
         : "none";
-
       if (!isStart) handleProgress();
       else if (progressInterval) {
         clearInterval(progressInterval);
@@ -103,7 +33,6 @@ function doRec(action) {
 function handleProgress() {
   document.getElementById("startB").disabled = true;
   toggleProgressUI(true);
-
   const inner = document.getElementById("progressBar");
   const text = document.getElementById("progressText");
 
@@ -117,24 +46,25 @@ function handleProgress() {
           clearInterval(progressInterval);
           toggleProgressUI(false);
           document.getElementById("startB").disabled = false;
-          alert("Video Saved");
+          alert("Video Saved!");
         }
       });
   }, 500);
 }
 
 function toggleProgressUI(show) {
-  const display = show ? "block" : "none";
-  document.getElementById("progress").style.display = display;
-  document.getElementById("progressText").style.display = display;
-  document.getElementById("saveWarning").style.display = display;
+  const d = show ? "block" : "none";
+  document.getElementById("progress").style.display = d;
+  document.getElementById("progressText").style.display = d;
+  document.getElementById("saveWarning").style.display = d;
 }
 
+// ─── Log recording ───────────────────────────────────────────────────────────
 function doLogRec(action) {
   let isStart = action === "start";
   fetch("/" + action + "_log_record")
-    .then((response) => response.json())
-    .then((data) => {
+    .then((r) => r.json())
+    .then(() => {
       document.getElementById("startLogB").style.display = isStart
         ? "none"
         : "block";
@@ -167,22 +97,18 @@ function pollLogSaved() {
   }, 500);
 }
 
+// ─── Live log stream ─────────────────────────────────────────────────────────
 function initLogStream() {
   const logDiv = document.getElementById("log");
-  const MAX_LINES = 200; // hard DOM cap — older lines pruned automatically
+  const MAX_LINES = 200;
   const evtSource = new EventSource("/log_stream");
 
-  // Buffer incoming SSE events and flush them in a single rAF batch.
-  // Without this, each event does a DOM append + layout + scroll individually,
-  // which causes visible jank when many events arrive in the same millisecond.
   let pending = [];
   let rafId = null;
 
   function flushPending() {
     rafId = null;
     if (!pending.length) return;
-
-    // Build a DocumentFragment — one reflow instead of one per line
     const frag = document.createDocumentFragment();
     for (const { text, color, bold } of pending) {
       const line = document.createElement("div");
@@ -192,16 +118,9 @@ function initLogStream() {
       frag.appendChild(line);
     }
     pending = [];
-
     logDiv.appendChild(frag);
-
-    // Prune oldest lines so the DOM never grows past MAX_LINES.
-    // Unbounded growth = layout thrash on every future append.
-    while (logDiv.children.length > MAX_LINES) {
+    while (logDiv.children.length > MAX_LINES)
       logDiv.removeChild(logDiv.firstChild);
-    }
-
-    // Instant scroll — smooth scroll triggers layout recalc on every frame
     logDiv.scrollTop = logDiv.scrollHeight;
   }
 
@@ -209,21 +128,24 @@ function initLogStream() {
     const text = e.data;
     let color = null,
       bold = false;
-
     if (text.includes("Cheating")) {
       color = "#dc2626";
       bold = true;
     } else if (text.includes("Normal")) {
       color = "#16a34a";
-    } else if (text.includes("Desk")) {
-      color = "#2563eb";
     } else if (text.includes("Object")) {
       color = "#f97316";
+    } else if (text.includes("Desk")) {
+      color = "#2563eb";
     }
-
     pending.push({ text, color, bold });
-
-    // Coalesce bursts — one DOM update per animation frame max
     if (!rafId) rafId = requestAnimationFrame(flushPending);
   };
 }
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  initLogStream();
+  document.getElementById("startB").disabled = false;
+  document.getElementById("startLogB").disabled = false;
+});

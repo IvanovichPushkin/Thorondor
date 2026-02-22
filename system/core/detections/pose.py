@@ -4,7 +4,7 @@ import numpy as np
 import time
 from datetime import datetime
 
-from core.pose_models import pose_model
+from core.pose_models import pose_model, DEVICE
 from core.config import (
     POSE_CONF_THRESHOLD,
     LOG_FILE,
@@ -32,7 +32,12 @@ SKELETON = [
 ]
 
 KPT_CONF_THRESHOLD = 0.3
-IOU_THRESHOLD = 0.3
+IOU_THRESHOLD      = 0.3
+
+# Inference resolution — 16:9 slice of imgsz=256.
+# YOLO letterboxes this to 256×256 internally; we scale coords back to full-res.
+_INFER_W = 256
+_INFER_H = 144
 
 _person_instances: dict[str, dict] = {}
 _next_instance_id = 0
@@ -65,8 +70,8 @@ def _iou(boxA, boxB):
 
 def _match_persons(prev_instances, current_detections):
     used_prev = set()
-    matched = {}
-    new_dets = []
+    matched   = {}
+    new_dets  = []
 
     for det in current_detections:
         best_id, best_iou = None, IOU_THRESHOLD
@@ -76,7 +81,7 @@ def _match_persons(prev_instances, current_detections):
             iou = _iou(det["box"], prev["box"])
             if iou > best_iou:
                 best_iou = iou
-                best_id = inst_id
+                best_id  = inst_id
 
         if best_id is not None:
             matched[best_id] = det
@@ -120,9 +125,22 @@ def _log_behavior(cam_name, inst_id, label, timestamp):
 
 
 def predict(frame, cam_name):
-    """Run inference only. Returns raw matched detections dict. Does NOT draw."""
+    """Run inference on a downscaled copy, scale coordinates back to full-res.
+    Returns raw matched detections dict. Does NOT draw.
+    """
+    orig_h, orig_w = frame.shape[:2]
+
+    # ── Pre-resize to inference resolution (much less memory to read/transfer) ──
+    small = cv2.resize(frame, (_INFER_W, _INFER_H), interpolation=cv2.INTER_LINEAR)
+    scale_x = orig_w / _INFER_W
+    scale_y = orig_h / _INFER_H
+
     pose_results = pose_model.predict(
-        frame, imgsz=256, conf=POSE_CONF_THRESHOLD, verbose=False
+        small,
+        imgsz=256,
+        conf=POSE_CONF_THRESHOLD,
+        verbose=False,
+        device=DEVICE if DEVICE != "directml" else "cpu",
     )
 
     current_detections = []
@@ -135,13 +153,23 @@ def predict(frame, cam_name):
         kpts_conf = kpts_obj.conf.cpu().numpy() if kpts_obj is not None else []
 
         for idx, box in enumerate(boxes):
-            cls             = int(box.cls[0].item())
-            conf_val        = float(box.conf[0].item())
-            label           = _get_label(cls)
-            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+            cls      = int(box.cls[0].item())
+            conf_val = float(box.conf[0].item())
+            label    = _get_label(cls)
+
+            # Scale from inference space → original frame space
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            x1 = int(x1 * scale_x); y1 = int(y1 * scale_y)
+            x2 = int(x2 * scale_x); y2 = int(y2 * scale_y)
 
             kp_xy   = kpts_xy[idx]   if idx < len(kpts_xy)   and len(kpts_xy[idx]) > 0   else np.zeros((17, 2))
             kp_conf = kpts_conf[idx] if idx < len(kpts_conf) and len(kpts_conf[idx]) > 0 else np.zeros(17)
+
+            # Scale keypoints back to full-res
+            if kp_xy is not None and len(kp_xy):
+                kp_xy = kp_xy.copy()
+                kp_xy[:, 0] *= scale_x
+                kp_xy[:, 1] *= scale_y
 
             current_detections.append({
                 "box":       (x1, y1, x2, y2),
